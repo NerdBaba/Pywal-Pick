@@ -6,12 +6,8 @@ struct RandomOverlayView: View {
     @ObservedObject var viewModel: WallpaperSwitcherViewModel
     @Binding var isShowing: Bool
     @State private var selectedWallpaper: ImageFile?
-    @State private var isAnimating = false
-    @State private var animationScale: CGFloat = 0.8
-    @State private var animationOpacity: Double = 0.0
-    @State private var animationRotation: Double = 0.0
     @State private var previewImage: Image?
-    @State private var isLoading = false
+    @State private var previewID = UUID()
     var setWallpaper: (ImageFile) -> Void
 
     var body: some View {
@@ -48,31 +44,19 @@ struct RandomOverlayView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 16)
 
-                // Preview area with animation
+                // Preview area
                 ZStack {
-                    if isLoading {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .tint(.white)
-                    } else if let previewImage = previewImage {
+                    if let previewImage = previewImage {
                         previewImage
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: 500, maxHeight: 300)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .scaleEffect(animationScale)
-                            .opacity(animationOpacity)
-                            .rotationEffect(.degrees(animationRotation))
-                            .animation(
-                                .interpolatingSpring(
-                                    mass: 0.8,
-                                    stiffness: 120,
-                                    damping: 12,
-                                    initialVelocity: 0
-                                )
-                                .speed(1.2),
-                                value: animationScale
-                            )
+                            .id(previewID)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.95).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                     } else {
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(.system(size: 80))
@@ -166,27 +150,14 @@ struct RandomOverlayView: View {
     }
 
     private func pickRandomWallpaper() {
-        isLoading = true
-        animationScale = 0.8
-        animationOpacity = 0.0
-        animationRotation = Double.random(in: -5...5)
+        if !viewModel.wallpapers.isEmpty {
+            let randomIndex = Int.random(in: 0..<viewModel.wallpapers.count)
+            selectedWallpaper = viewModel.wallpapers[randomIndex]
+            loadPreviewImage(for: selectedWallpaper!.url)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            if !viewModel.wallpapers.isEmpty {
-                let randomIndex = Int.random(in: 0..<viewModel.wallpapers.count)
-                selectedWallpaper = viewModel.wallpapers[randomIndex]
-
-                // Load preview image
-                loadPreviewImage(for: selectedWallpaper!.url)
-
-                // Trigger animation
-                withAnimation {
-                    animationScale = 1.0
-                    animationOpacity = 1.0
-                    animationRotation = 0.0
-                }
+            withAnimation(.spring(duration: 0.3, bounce: 0.2)) {
+                previewID = UUID()
             }
-            isLoading = false
         }
     }
 
