@@ -8,6 +8,7 @@ struct RandomOverlayView: View {
     @State private var selectedWallpaper: ImageFile?
     @State private var previewImage: Image?
     @State private var previewID = UUID()
+    @State private var showingDeleteAlert = false
     var setWallpaper: (ImageFile) -> Void
 
     var body: some View {
@@ -121,15 +122,26 @@ struct RandomOverlayView: View {
                     .controlSize(.large)
 
                     Button(action: {
-                        // Cancel
-                        isShowing = false
+                        // Delete wallpaper (with confirmation)
+                        if let wallpaper = selectedWallpaper {
+                            showingDeleteAlert = true
+                        }
                     }) {
-                        Label("Cancel", systemImage: "xmark.circle")
+                        Label("Delete", systemImage: "trash")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .tint(.red)
                     .controlSize(.large)
+                    .disabled(selectedWallpaper == nil)
+                    .alert("Delete Wallpaper?", isPresented: $showingDeleteAlert, presenting: selectedWallpaper) { wallpaper in
+                        Button("Delete", role: .destructive) {
+                            deleteWallpaper(wallpaper)
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: { wallpaper in
+                        Text("Are you sure you want to delete \"\(wallpaper.name)\"? This action cannot be undone.")
+                    }
                 }
                 .padding(.horizontal, 24)
             }
@@ -186,6 +198,21 @@ struct RandomOverlayView: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .none
         return formatter.string(from: date)
+    }
+
+    private func deleteWallpaper(_ wallpaper: ImageFile) {
+        do {
+            try FileManager.default.removeItem(at: wallpaper.url)
+            // Remove from wallpaper list
+            if let index = viewModel.wallpapers.firstIndex(where: { $0.id == wallpaper.id }) {
+                viewModel.wallpapers.remove(at: index)
+                viewModel.updateFilteredWallpapers()
+            }
+            // Pick a new random wallpaper
+            pickRandomWallpaper()
+        } catch {
+            print("Failed to delete wallpaper: \(error)")
+        }
     }
 }
 
