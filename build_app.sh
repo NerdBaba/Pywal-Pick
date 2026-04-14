@@ -1,49 +1,52 @@
 #!/bin/bash
 
-echo "Building Wallpaper Switcher.app..."
+echo "Building Pywal Pick.app..."
 
 # Clean previous build
-rm -rf WallpaperSwitcher.app
+rm -rf PywalPick.app
 
 # Build in release mode
 swift build --configuration release
 
 # Create app bundle structure
-mkdir -p WallpaperSwitcher.app/Contents/MacOS
-mkdir -p WallpaperSwitcher.app/Contents/Resources
+mkdir -p PywalPick.app/Contents/MacOS
+mkdir -p PywalPick.app/Contents/Resources
 
 # Copy executable
-cp .build/release/ImagePicker WallpaperSwitcher.app/Contents/MacOS/WallpaperSwitcher
+cp .build/release/PywalPick PywalPick.app/Contents/MacOS/PywalPick
 
 # Make executable
-chmod +x WallpaperSwitcher.app/Contents/MacOS/WallpaperSwitcher
+chmod +x PywalPick.app/Contents/MacOS/PywalPick
 
 # Copy schemer2 binary into the app bundle
 if [ -f "$HOME/.local/bin/schemer2" ]; then
-    cp ~/.local/bin/schemer2 WallpaperSwitcher.app/Contents/MacOS/schemer2
-    chmod +x WallpaperSwitcher.app/Contents/MacOS/schemer2
+    cp ~/.local/bin/schemer2 PywalPick.app/Contents/MacOS/schemer2
+    chmod +x PywalPick.app/Contents/MacOS/schemer2
     echo "Bundled schemer2 binary"
 else
     echo "Warning: schemer2 not found at ~/.local/bin/schemer2"
 fi
 
 # Copy Info.plist
-cp Info.plist WallpaperSwitcher.app/Contents/Info.plist
+cp Info.plist PywalPick.app/Contents/Info.plist
 
-# Generate icon if ImageMagick is available
-if command -v convert &> /dev/null; then
-    mkdir -p WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset
-    convert -background none AppIcon.svg -resize 16x16 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_16x16.png
-    convert -background none AppIcon.svg -resize 32x32 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_16x16@2x.png
-    convert -background none AppIcon.svg -resize 32x32 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_32x32.png
-    convert -background none AppIcon.svg -resize 128x128 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_128x128.png
-    convert -background none AppIcon.svg -resize 256x256 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_128x128@2x.png
-    convert -background none AppIcon.svg -resize 256x256 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_256x256.png
-    convert -background none AppIcon.svg -resize 512x512 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_256x256@2x.png
-    convert -background none AppIcon.svg -resize 512x512 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_512x512.png
-    convert -background none AppIcon.svg -resize 1024x1024 WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/icon_512x512@2x.png
+# Generate icon from polaroid-camera.png if ImageMagick is available
+if command -v magick &> /dev/null || command -v convert &> /dev/null; then
+    CONVERT_CMD="magick"
+    command -v convert &> /dev/null && CONVERT_CMD="convert"
     
-    cat > WallpaperSwitcher.app/Contents/Resources/AppIcon.appiconset/Contents.json << 'EOF'
+    mkdir -p PywalPick.app/Contents/Resources/AppIcon.appiconset
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 16x16 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_16x16.png
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 32x32 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_16x16@2x.png
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 32x32 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_32x32.png
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 128x128 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_128x128.png
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 256x256 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_128x128@2x.png
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 256x256 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_256x256.png
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 512x512 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_256x256@2x.png
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 512x512 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_512x512.png
+    $CONVERT_CMD -background none assets/polaroid-camera.png -resize 1024x1024 PywalPick.app/Contents/Resources/AppIcon.appiconset/icon_512x512@2x.png
+    
+    cat > PywalPick.app/Contents/Resources/AppIcon.appiconset/Contents.json << 'EOF'
 {
   "images" : [
     { "idiom" : "mac", "scale" : "1x", "size" : "16x16" },
@@ -60,8 +63,8 @@ if command -v convert &> /dev/null; then
   "info" : { "author" : "xcode", "version" : 1 }
 }
 EOF
-    echo "Icon generated from AppIcon.svg"
+    echo "Icon generated from polaroid-camera.png"
 fi
 
-echo "Wallpaper Switcher.app created successfully!"
-echo "You can now double-click WallpaperSwitcher.app to run it."
+echo "Pywal Pick.app created successfully!"
+echo "You can now double-click PywalPick.app to run it."

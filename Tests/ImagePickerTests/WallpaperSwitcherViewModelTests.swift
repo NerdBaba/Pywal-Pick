@@ -1,5 +1,5 @@
 import XCTest
-@testable import ImagePicker
+@testable import PywalPick
 
 @MainActor
 final class WallpaperSwitcherViewModelTests: XCTestCase {

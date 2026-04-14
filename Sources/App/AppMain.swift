@@ -1,9 +1,9 @@
 import SwiftUI
-import ImagePicker
+import PywalPick
 import AppKit
 
 @main
-struct ImagePickerApp: App {
+struct PywalPickApp: App {
     @StateObject private var settingsManager = SettingsManager()
     
     init() {
@@ -12,7 +12,7 @@ struct ImagePickerApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Wallpaper Switcher", id: "main") {
+        WindowGroup("Pywal Pick", id: "main") {
             WallpaperSwitcherView()
                 .environmentObject(settingsManager)
                 .background(.ultraThinMaterial)

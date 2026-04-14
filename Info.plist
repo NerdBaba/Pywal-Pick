@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Wallpaper Switcher</string>
+    <string>Pywal Pick</string>
     <key>CFBundleDisplayName</key>
-    <string>Wallpaper Switcher</string>
+    <string>Pywal Pick</string>
     <key>CFBundleIdentifier</key>
-    <string>com.wallpaper-switcher.app</string>
+    <string>com.pywalpick.app</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
@@ -15,7 +15,7 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>WallpaperSwitcher</string>
+    <string>PywalPick</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>

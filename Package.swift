@@ -2,28 +2,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "ImagePicker",
+    name: "PywalPick",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "ImagePicker", targets: ["App"])
+        .executable(name: "PywalPick", targets: ["App"])
     ],
     targets: [
         .target(
-            name: "ImagePicker",
+            name: "PywalPick",
             dependencies: [],
-            path: "Sources/ImagePicker",
+            path: "Sources/PywalPick",
             resources: [.process("Resources")]
         ),
         .executableTarget(
             name: "App",
-            dependencies: ["ImagePicker"],
+            dependencies: ["PywalPick"],
             path: "Sources/App"
         ),
         .testTarget(
-            name: "ImagePickerTests",
-            dependencies: ["ImagePicker"],
+            name: "PywalPickTests",
+            dependencies: ["PywalPick"],
             path: "Tests/ImagePickerTests"
         ),
     ]
