@@ -1244,7 +1244,7 @@ public class WallpaperSwitcherViewModel: ObservableObject {
     }
 
     func computeAndStoreColorGroup(for wallpaper: ImageFile) async {
-        guard let color = await DominantColorCache.shared.dominantColor(for: wallpaper.url) else { return }
+        guard let color = DominantColorCache.shared.dominantColor(for: wallpaper.url) else { return }
         let group = color.colorGroup
         await MainActor.run {
             colorGroups[wallpaper.url] = group
@@ -1388,76 +1388,69 @@ public class WallpaperSwitcherViewModel: ObservableObject {
         errorMessage = nil
 
         Task {
-            do {
-                let folderURL = URL(fileURLWithPath: folderPath)
-                let enumerator = FileManager.default.enumerator(
-                    at: folderURL,
-                    includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
-                    options: [.skipsHiddenFiles]
-                )
+            let folderURL = URL(fileURLWithPath: folderPath)
+            let enumerator = FileManager.default.enumerator(
+                at: folderURL,
+                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+                options: [.skipsHiddenFiles]
+            )
 
-                var imageFiles: [ImageFile] = []
-                while let fileURL = enumerator?.nextObject() as? URL {
-                    guard
-                        let fileType = try? fileURL.resourceValues(forKeys: [.contentTypeKey])
-                            .contentType,
-                        supportedImageTypes.contains(fileType)
-                    else {
-                        continue
-                    }
-                    imageFiles.append(ImageFile(url: fileURL))
+            var imageFiles: [ImageFile] = []
+            while let fileURL = enumerator?.nextObject() as? URL {
+                guard
+                    let fileType = try? fileURL.resourceValues(forKeys: [.contentTypeKey])
+                        .contentType,
+                    supportedImageTypes.contains(fileType)
+                else {
+                    continue
                 }
+                imageFiles.append(ImageFile(url: fileURL))
+            }
 
-                print("📷 Found \(imageFiles.count) image files")
+            print("📷 Found \(imageFiles.count) image files")
 
-                // Background thumbnail generation (simplified)
-                DispatchQueue.global(qos: .utility).async {
-                    for imageFile in imageFiles {
-                        let _ = ThumbnailCache.shared.generateAndCacheThumbnail(
-                            for: imageFile.url, size: .medium)
-                    }
-                    print("✓ Generated cached thumbnails for \(imageFiles.count) images")
+            // Background thumbnail generation (simplified)
+            let capturedFiles = imageFiles
+            DispatchQueue.global(qos: .utility).async {
+                for imageFile in capturedFiles {
+                    let _ = ThumbnailCache.shared.generateAndCacheThumbnail(
+                        for: imageFile.url, size: .medium)
                 }
+                print("✓ Generated cached thumbnails for \(capturedFiles.count) images")
+            }
 
-                // Load cached colors from disk instantly, compute new ones in background
-                print("🎨 Loading cached colors for \(imageFiles.count) images")
-                let cachedColors = self.loadCachedColors(for: imageFiles)
-                print("🎨 Found \(cachedColors.count) cached colors")
-                let newImageFiles = imageFiles.filter { cachedColors[$0.url] == nil }
-                print("🎨 \(newImageFiles.count) new images to compute")
+            // Load cached colors from disk instantly, compute new ones in background
+            print("🎨 Loading cached colors for \(imageFiles.count) images")
+            let cachedColors = self.loadCachedColors(for: imageFiles)
+            print("🎨 Found \(cachedColors.count) cached colors")
+            let newImageFiles = imageFiles.filter { cachedColors[$0.url] == nil }
+            print("🎨 \(newImageFiles.count) new images to compute")
 
-                print("🎨 About to update UI on MainActor")
+            print("🎨 About to update UI on MainActor")
+            await MainActor.run {
+                self.wallpapers = imageFiles
+                self.colorGroups = cachedColors
+                self.colorCounts = self.buildColorCounts(from: cachedColors)
+                self.isLoading = false
+                self.updateFilteredWallpapers()
+                print("✅ Loaded \(imageFiles.count) wallpapers, \(cachedColors.count) colors from cache, \(newImageFiles.count) to compute")
+                print("📊 Color breakdown: \(self.colorCounts)")
+            }
+
+            // Compute colors for new wallpapers in background
+            if !newImageFiles.isEmpty {
+                let newColors = await self.computeAllColorGroups(for: newImageFiles)
                 await MainActor.run {
-                    self.wallpapers = imageFiles
-                    self.colorGroups = cachedColors
-                    self.colorCounts = self.buildColorCounts(from: cachedColors)
-                    self.isLoading = false
+                    self.colorGroups.merge(newColors) { _, new in new }
+                    self.colorCounts = self.buildColorCounts(from: self.colorGroups)
                     self.updateFilteredWallpapers()
-                    print("✅ Loaded \(imageFiles.count) wallpapers, \(cachedColors.count) colors from cache, \(newImageFiles.count) to compute")
-                    print("📊 Color breakdown: \(self.colorCounts)")
-                }
-
-                // Compute colors for new wallpapers in background
-                if !newImageFiles.isEmpty {
-                    let newColors = await self.computeAllColorGroups(for: newImageFiles)
-                    await MainActor.run {
-                        self.colorGroups.merge(newColors) { _, new in new }
-                        self.colorCounts = self.buildColorCounts(from: self.colorGroups)
-                        self.updateFilteredWallpapers()
-                        print("✅ Computed \(newColors.count) new colors")
-                    }
-                }
-
-                // Clean up stale cache entries (deleted wallpapers)
-                let validURLs = Set(imageFiles.map { $0.url })
-                DominantColorCache.shared.cleanup(for: validURLs)
-            } catch {
-                await MainActor.run {
-                    self.errorMessage = "Failed to load wallpapers: \(error.localizedDescription)"
-                    self.wallpapers = []
-                    self.isLoading = false
+                    print("✅ Computed \(newColors.count) new colors")
                 }
             }
+
+            // Clean up stale cache entries (deleted wallpapers)
+            let validURLs = Set(imageFiles.map { $0.url })
+            DominantColorCache.shared.cleanup(for: validURLs)
         }
     }
 
@@ -1627,7 +1620,7 @@ struct WallpaperCardView: View {
             ) {
                 thumbnailImage = Image(nsImage: nsImage)
             }
-            if let color = await DominantColorCache.shared.dominantColor(for: wallpaper.url) {
+            if let color = DominantColorCache.shared.dominantColor(for: wallpaper.url) {
                 dominantColor = Color(color)
             }
         }

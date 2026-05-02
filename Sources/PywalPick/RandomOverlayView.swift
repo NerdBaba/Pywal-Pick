@@ -122,10 +122,7 @@ struct RandomOverlayView: View {
                     .controlSize(.large)
 
                     Button(action: {
-                        // Delete wallpaper (with confirmation)
-                        if let wallpaper = selectedWallpaper {
-                            showingDeleteAlert = true
-                        }
+                        showingDeleteAlert = true
                     }) {
                         Label("Delete", systemImage: "trash")
                             .frame(maxWidth: .infinity)

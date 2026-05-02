@@ -69,21 +69,20 @@ public enum ViewMode: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
-@MainActor
 public struct AppConfig: Codable, Sendable {
-    var wallpaperFolderPath: String
-    var dummyWallpaperFile: String
-    var walBinaryPath: String
-    var defaultSortOption: SortOption
-    var defaultSortOrder: Bool
-    var gridColumns: Int
-    var runPywalfox: Bool
-    var customScriptPath: String
-    var viewMode: ViewMode
-    var selectedBackend: WalBackend
-    var lastSelectedWallpaperPath: String
+    public var wallpaperFolderPath: String
+    public var dummyWallpaperFile: String
+    public var walBinaryPath: String
+    public var defaultSortOption: SortOption
+    public var defaultSortOrder: Bool
+    public var gridColumns: Int
+    public var runPywalfox: Bool
+    public var customScriptPath: String
+    public var viewMode: ViewMode
+    public var selectedBackend: WalBackend
+    public var lastSelectedWallpaperPath: String
 
-    @MainActor public static let `default` = AppConfig(
+    public static let `default` = AppConfig(
         wallpaperFolderPath: "",
         dummyWallpaperFile: NSHomeDirectory() + "/Pictures/dummy-file.jpg",
         walBinaryPath: "/Volumes/NightSky/babaisalive/.local/bin/wal",
@@ -99,7 +98,7 @@ public struct AppConfig: Codable, Sendable {
 
     private static let configURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/PywalPick/config.json")
 
-    @MainActor public static func load() -> AppConfig {
+    public static func load() -> AppConfig {
         guard let data = try? Data(contentsOf: configURL),
               let config = try? JSONDecoder().decode(AppConfig.self, from: data) else {
             return `default`
@@ -107,7 +106,7 @@ public struct AppConfig: Codable, Sendable {
         return config
     }
 
-    @MainActor public func save() {
+    public func save() {
         do {
             let configDir = AppConfig.configURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)

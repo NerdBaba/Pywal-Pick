@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "PywalPick", targets: ["App"])
+        .executable(name: "PywalPick", targets: ["App"]),
+        .executable(name: "wallpick", targets: ["CLI"])
     ],
     targets: [
         .target(
@@ -20,6 +21,11 @@ let package = Package(
             name: "App",
             dependencies: ["PywalPick"],
             path: "Sources/App"
+        ),
+        .executableTarget(
+            name: "CLI",
+            dependencies: ["PywalPick"],
+            path: "Sources/CLI"
         ),
         .testTarget(
             name: "PywalPickTests",

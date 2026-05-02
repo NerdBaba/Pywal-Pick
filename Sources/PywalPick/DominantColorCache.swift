@@ -80,7 +80,7 @@ class DominantColorCache: @unchecked Sendable {
                 )
             }
         }
-        queue.async(flags: .barrier) { self.cache = loaded }
+        queue.async(flags: .barrier) { [loaded] in self.cache = loaded }
     }
 
     private func saveToDisk() {

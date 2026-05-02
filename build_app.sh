@@ -27,6 +27,15 @@ else
     echo "Warning: schemer2 not found at ~/.local/bin/schemer2"
 fi
 
+# Copy wallpick CLI binary into the app bundle
+if [ -f ".build/release/wallpick" ]; then
+    cp .build/release/wallpick PywalPick.app/Contents/MacOS/wallpick
+    chmod +x PywalPick.app/Contents/MacOS/wallpick
+    echo "Bundled wallpick CLI binary"
+else
+    echo "Warning: wallpick binary not found at .build/release/wallpick"
+fi
+
 # Copy Info.plist
 cp Info.plist PywalPick.app/Contents/Info.plist
 
