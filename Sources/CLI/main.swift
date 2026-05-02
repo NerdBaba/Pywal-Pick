@@ -48,8 +48,6 @@ func main() {
         cmdRandom(backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
     case "update":
         cmdUpdate(backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
-    case "fzf":
-        cmdFzf(backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
     case "set":
         guard let path = filteredArgs.first else {
             print("Error: 'set' requires a file path argument")
@@ -79,7 +77,6 @@ func printUsage() {
     Commands:
       random              Set a random wallpaper and update colors
       update              Re-run wal on the current wallpaper (update colors only)
-      fzf                 Pick a wallpaper interactively via fzf
       set <path>          Set wallpaper by file path
       list [query]        List wallpapers (optionally filtered by query)
       current             Show the current wallpaper path
@@ -94,7 +91,6 @@ func printUsage() {
       wallpick random
       wallpick random --backend fast_colorthief
       wallpick update
-      wallpick fzf
       wallpick set /path/to/wallpaper.jpg
       wallpick list sunset
       wallpick current
@@ -378,74 +374,6 @@ func cmdUpdate(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) {
     let name = URL(fileURLWithPath: path).lastPathComponent
     print("Updating colors for: \(name)")
     let success = runWal(wallpaperPath: path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
-    exit(success ? 0 : 1)
-}
-
-func cmdFzf(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) {
-    let wallpapers = discoverWallpapers()
-    guard !wallpapers.isEmpty else {
-        print("Error: No wallpapers found in configured folder.")
-        exit(1)
-    }
-
-    let fzfPath = runShellCommandOutput("which fzf")
-    if fzfPath == nil || fzfPath!.isEmpty {
-        print("Error: fzf is not installed. Install it with: brew install fzf")
-        exit(1)
-    }
-
-    let lines = wallpapers.enumerated().map { "\($0)\t\($1.name)" }
-    let input = lines.joined(separator: "\n")
-
-    let task = Process()
-    task.executableURL = URL(fileURLWithPath: "/bin/zsh")
-    task.arguments = ["-c", "fzf --delimiter='\t' --with-nth=2.."]
-
-    let inputPipe = Pipe()
-    let outputPipe = Pipe()
-    task.standardInput = inputPipe
-    task.standardOutput = outputPipe
-    task.standardError = FileHandle.standardError
-
-    var environment = ProcessInfo.processInfo.environment
-    environment["PATH"] = (environment["PATH"] ?? "") + ":/usr/local/bin:/opt/homebrew/bin"
-    task.environment = environment
-
-    try? task.run()
-    inputPipe.fileHandleForReading.write(input.data(using: .utf8) ?? Data())
-    try? inputPipe.fileHandleForReading.close()
-    task.waitUntilExit()
-
-    guard task.terminationStatus == 0 else {
-        print("fzf exited without selection")
-        exit(0)
-    }
-
-    let outputData = try? outputPipe.fileHandleForReading.readToEnd()
-    let output = String(data: outputData ?? Data(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    guard let output = output, let firstTab = output.firstIndex(of: "\t") else {
-        print("Error: Could not parse fzf output")
-        exit(1)
-    }
-
-    let indexStr = output[..<firstTab]
-    guard let index = Int(indexStr), index < wallpapers.count else {
-        print("Error: Invalid selection")
-        exit(1)
-    }
-
-    let wallpaper = wallpapers[index]
-    print("Selected: \(wallpaper.name)")
-    let success = runWal(wallpaperPath: wallpaper.url.path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
-
-    if success && !dryRun {
-        var updatedConfig = AppConfig.load()
-        updatedConfig.lastSelectedWallpaperPath = wallpaper.url.path
-        updatedConfig.save()
-        print("✓ Wallpaper set successfully")
-    }
-
     exit(success ? 0 : 1)
 }
 

@@ -35,44 +35,40 @@ public struct SettingsView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Settings")
-                    .font(.title)
-                    .fontWeight(.bold)
-                Spacer()
-                Button("Done") {
-                    dismiss()
+            // Tab switcher bar
+            HStack(spacing: 0) {
+                ForEach(Tab.allCases) { tab in
+                    Button {
+                        selectedTab = tab.id
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: tab.icon)
+                                .font(.title3)
+                            Text(tab.title)
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(selectedTab == tab.id ? Color.accentColor.opacity(0.15) : Color.clear)
+                        .foregroundColor(selectedTab == tab.id ? .accentColor : .secondary)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 12)
 
-            // Tab picker
-            Picker("Settings", selection: $selectedTab) {
-                ForEach(Tab.allCases, id: \.id) { tab in
-                    Label(tab.title, systemImage: tab.icon).tag(tab.id)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
+            Divider()
 
             // Tab content
-            TabView(selection: $selectedTab) {
-                pathsTab
-                    .tag("paths")
-                appearanceTab
-                    .tag("appearance")
-                integrationsTab
-                    .tag("integrations")
-                cliTab
-                    .tag("cli")
+            Group {
+                switch selectedTab {
+                case "paths": pathsTab
+                case "appearance": appearanceTab
+                case "integrations": integrationsTab
+                case "cli": cliTab
+                default: pathsTab
+                }
             }
-            .tabViewStyle(.automatic)
             .padding(.horizontal, 20)
         }
         .padding()
@@ -294,8 +290,6 @@ public struct SettingsView: View {
 
                     Text("wallpick random          - Set a random wallpaper")
                         .font(.system(.caption, design: .monospaced))
-                    Text("wallpick fzf               - Pick wallpaper interactively via fzf")
-                        .font(.system(.caption, design: .monospaced))
                     Text("wallpick set <path>        - Set wallpaper by path")
                         .font(.system(.caption, design: .monospaced))
                     Text("wallpick update            - Re-run wal on current wallpaper")
@@ -498,7 +492,7 @@ public struct SettingsView: View {
 // MARK: - Tab Definition
 
 extension SettingsView {
-    private enum Tab: String, CaseIterable, Identifiable {
+    private enum Tab: String, CaseIterable, Hashable, Identifiable {
         case paths
         case appearance
         case integrations
