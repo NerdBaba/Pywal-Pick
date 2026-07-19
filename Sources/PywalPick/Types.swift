@@ -69,6 +69,35 @@ public enum ViewMode: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+/// Type of animated transition played in the desktop overlay when a wallpaper
+/// is applied. `random` resolves to one of the concrete effects at apply time.
+public enum TransitionType: String, CaseIterable, Codable, Identifiable, Sendable {
+    case fade
+    case wipe
+    case grow
+    case random
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .fade: return "Fade"
+        case .wipe: return "Wipe"
+        case .grow: return "Grow"
+        case .random: return "Random"
+        }
+    }
+
+    /// Concrete effect to render, resolving `random` to a uniform pick.
+    public var resolved: TransitionType {
+        if self == .random {
+            let concrete: [TransitionType] = [.fade, .wipe, .grow]
+            return concrete.randomElement() ?? .fade
+        }
+        return self
+    }
+}
+
 public struct AppConfig: Codable, Sendable {
     public var wallpaperFolderPath: String
     public var dummyWallpaperFile: String
@@ -81,6 +110,9 @@ public struct AppConfig: Codable, Sendable {
     public var viewMode: ViewMode
     public var selectedBackend: WalBackend
     public var lastSelectedWallpaperPath: String
+    public var transitionType: TransitionType
+    public var transitionDuration: Double
+    public var transitionFPS: Int
 
     public static let `default` = AppConfig(
         wallpaperFolderPath: "",
@@ -93,7 +125,10 @@ public struct AppConfig: Codable, Sendable {
         customScriptPath: "",
         viewMode: .grid,
         selectedBackend: .schemer2,
-        lastSelectedWallpaperPath: ""
+        lastSelectedWallpaperPath: "",
+        transitionType: .fade,
+        transitionDuration: 1.0,
+        transitionFPS: 60
     )
 
     private static let configURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/PywalPick/config.json")

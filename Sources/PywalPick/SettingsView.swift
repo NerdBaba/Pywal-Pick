@@ -185,6 +185,40 @@ public struct SettingsView: View {
                     }
                     .pickerStyle(.segmented)
                 }
+
+                Divider()
+
+                Group {
+                    Text("Wallpaper Transition")
+                        .font(.headline)
+
+                    Picker("Transition", selection: $settingsManager.config.transitionType) {
+                        ForEach(TransitionType.allCases) { type in
+                            Text(type.displayName).tag(type)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    HStack {
+                        Text("Duration:")
+                        Stepper(value: $settingsManager.config.transitionDuration, in: 0.2...3.0, step: 0.1) {
+                            Text(String(format: "%.1f s", settingsManager.config.transitionDuration))
+                                .font(.system(.body, design: .monospaced))
+                        }
+                    }
+
+                    HStack {
+                        Text("Frame rate:")
+                        Stepper(value: $settingsManager.config.transitionFPS, in: 10...120, step: 5) {
+                            Text("\(settingsManager.config.transitionFPS) fps")
+                                .font(.system(.body, design: .monospaced))
+                        }
+                    }
+
+                    Text("Plays a brief animation above the desktop when a wallpaper is applied.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             .padding(.vertical, 8)
         }

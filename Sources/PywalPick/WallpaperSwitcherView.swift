@@ -773,208 +773,224 @@ public struct WallpaperSwitcherView: View {
         currentWallpaper = wallpaper.name
         let usedBackend = backend ?? settingsManager.config.selectedBackend
 
-        Task {
-            do {
-                // Copy selected image to dummy file (overwriting it)
-                let fileManager = FileManager.default
-                let dummyFileURL = URL(fileURLWithPath: settingsManager.config.dummyWallpaperFile)
-                let dummyFilePath = dummyFileURL.path
+        // Resolve the "old" image (what's currently on the desktop). Prefer the
+        // real desktop image reported by the system; fall back to the last
+        // selected wallpaper, then to the new image.
+        let newURL = wallpaper.url
+        let oldURL: URL
+        if let desktopURL = NSWorkspace.shared.desktopImageURL(for: NSScreen.main ?? NSScreen.screens[0]),
+            !desktopURL.path.isEmpty
+        {
+            oldURL = desktopURL
+        } else if !settingsManager.config.lastSelectedWallpaperPath.isEmpty {
+            oldURL = URL(fileURLWithPath: settingsManager.config.lastSelectedWallpaperPath)
+        } else {
+            oldURL = newURL
+        }
 
-                // Log to file for debugging
-                let logPath = "/tmp/wallpaper_switcher.log"
-                let timestamp = DateFormatter.localizedString(
-                    from: Date(), dateStyle: .short, timeStyle: .medium)
+        // Overlay-first: play the transition, then apply wal underneath so the
+        // desktop already matches when the overlay fades out.
+        TransitionOverlayController.shared.play(
+            oldURL: oldURL,
+            newURL: newURL,
+            type: settingsManager.config.transitionType,
+            duration: settingsManager.config.transitionDuration,
+            fps: settingsManager.config.transitionFPS
+        ) {
+            Task {
+                await self.applyWallpaper(wallpaper, backend: usedBackend)
+            }
+        }
+    }
 
-                let logMessage = """
-                    === Wallpaper Switcher Debug Log - \(timestamp) ===
-                    Setting wallpaper: \(wallpaper.name)
-                    Dummy file path: \(dummyFilePath)
-                    Wal binary path: \(settingsManager.config.walBinaryPath)
-                    Current working directory: \(fileManager.currentDirectoryPath)
-                    Home directory: \(NSHomeDirectory())
-                    PATH: \(ProcessInfo.processInfo.environment["PATH"] ?? "Not set")
+    /// Runs the actual `wal` application logic. Invoked from the transition
+    /// overlay's completion closure so the desktop is updated behind the overlay.
+    private func applyWallpaper(_ wallpaper: ImageFile, backend usedBackend: WalBackend) async {
+        // Copy selected image to dummy file (overwriting it)
+        let fileManager = FileManager.default
+        let dummyFileURL = URL(fileURLWithPath: settingsManager.config.dummyWallpaperFile)
+        let dummyFilePath = dummyFileURL.path
 
+        // Log to file for debugging
+        let logPath = "/tmp/wallpaper_switcher.log"
+        let timestamp = DateFormatter.localizedString(
+            from: Date(), dateStyle: .short, timeStyle: .medium)
+
+        let logMessage = """
+            === Wallpaper Switcher Debug Log - \(timestamp) ===
+            Setting wallpaper: \(wallpaper.name)
+            Dummy file path: \(dummyFilePath)
+            Wal binary path: \(settingsManager.config.walBinaryPath)
+            Current working directory: \(fileManager.currentDirectoryPath)
+            Home directory: \(NSHomeDirectory())
+            PATH: \(ProcessInfo.processInfo.environment["PATH"] ?? "Not set")
+
+            """
+
+        if fileManager.fileExists(atPath: logPath) {
+            if var existingContent = try? String(
+                contentsOfFile: logPath, encoding: .utf8)
+            {
+                existingContent += "\n" + logMessage
+                try? existingContent.write(
+                    toFile: logPath, atomically: true, encoding: .utf8)
+            }
+        } else {
+            try? logMessage.write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+
+        print("Setting wallpaper: \(wallpaper.name)")
+        print("Dummy file path: \(dummyFilePath)")
+        print("Wal binary path: \(settingsManager.config.walBinaryPath)")
+        print("Current working directory: \(fileManager.currentDirectoryPath)")
+        print("Home directory: \(NSHomeDirectory())")
+        print("PATH: \(ProcessInfo.processInfo.environment["PATH"] ?? "Not set")")
+
+        // Check if wal binary exists
+        print(
+            "Checking wal binary at configured path: \(settingsManager.config.walBinaryPath)"
+        )
+        if !fileManager.fileExists(atPath: settingsManager.config.walBinaryPath) {
+            print(
+                "WARNING: Wal binary not found at configured path: \(settingsManager.config.walBinaryPath)"
+            )
+
+            // Try common wal locations
+            let commonWalPaths = [
+                "/usr/local/bin/wal",
+                "/opt/homebrew/bin/wal",
+                "/usr/bin/wal",
+                "/Volumes/NightSky/babaisalive/.local/bin/wal",
+                NSHomeDirectory() + "/.local/bin/wal",
+                NSHomeDirectory() + "/bin/wal",
+            ]
+
+            var foundWal = false
+            for path in commonWalPaths {
+                if fileManager.fileExists(atPath: path) {
+                    print("✓ Found wal at: \(path)")
+                    settingsManager.config.walBinaryPath = path
+                    foundWal = true
+                    break
+                }
+            }
+
+            if !foundWal {
+                print("ERROR: Could not find wal binary in common locations")
+                return
+            }
+        } else {
+            print(
+                "✓ Wal binary found at configured path: \(settingsManager.config.walBinaryPath)"
+            )
+        }
+
+        // Check if wal is executable
+        if let attributes = try? fileManager.attributesOfItem(
+            atPath: settingsManager.config.walBinaryPath),
+            let permissions = attributes[.posixPermissions] as? NSNumber
+        {
+            let isExecutable = permissions.intValue & 0o111 != 0
+            print(
+                "Wal permissions: \(String(format: "%o", permissions.intValue)), executable: \(isExecutable)"
+            )
+            if !isExecutable {
+                print("WARNING: Wal binary is not executable!")
+            }
+        }
+
+        // Copy the wallpaper file to the dummy location
+        if fileManager.fileExists(atPath: dummyFilePath) {
+            try? fileManager.removeItem(at: dummyFileURL)
+        }
+        do {
+            try fileManager.copyItem(at: wallpaper.url, to: dummyFileURL)
+        } catch {
+            print("Error copying wallpaper to dummy file: \(error)")
+            return
+        }
+
+        // Kill WallpaperAgent to force macOS to reload wallpaper
+        let _ = await runShellCommand("killall WallpaperAgent")
+
+        // Run wal command with the selected wallpaper using configured backend
+        let walCommand =
+            "\(settingsManager.config.walBinaryPath) -i \"\(dummyFilePath)\" -n --backend \(usedBackend.rawValue)"
+        print("Running wal command: \(walCommand)")
+        let walSuccess = await runShellCommand(walCommand)
+
+        if walSuccess {
+            print("✓ Wal command completed successfully")
+            // Wait a moment for wal to finish writing files
+            try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1 second
+
+            // Verify wal actually worked by checking if colors file was updated
+            let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
+            if fileManager.fileExists(atPath: walCachePath) {
+                let colorsContent = (try? String(
+                    contentsOfFile: walCachePath, encoding: .utf8)) ?? ""
+                let colorLines = colorsContent.components(separatedBy: .newlines).filter
+                { !$0.isEmpty && $0.hasPrefix("#") }
+                print("✓ Wal updated colors file with \(colorLines.count) colors")
+
+                // Set system accent color from wal colors
+                await setAccentColorFromWal()
+
+                // Run pywalfox update if enabled
+                if settingsManager.config.runPywalfox {
+                    print("Running pywalfox update...")
+                    let pywalfoxSuccess = await runShellCommand("pywalfox update")
+                    if pywalfoxSuccess {
+                        print("✓ Pywalfox update completed successfully")
+                    } else {
+                        print("✗ Pywalfox update failed")
+                    }
+                }
+
+                // Run custom shell script if configured
+                if !settingsManager.config.customScriptPath.isEmpty {
+                    print("Running custom script: \(settingsManager.config.customScriptPath)")
+                    let scriptSuccess = await runShellCommand(settingsManager.config.customScriptPath)
+                    if scriptSuccess {
+                        print("✓ Custom script completed successfully")
+                    } else {
+                        print("✗ Custom script failed")
+                    }
+                }
+            } else {
+                print("WARNING: Wal colors file not found after command")
+            }
+
+            await MainActor.run {
+                settingsManager.config.lastSelectedWallpaperPath = wallpaper.url.path
+
+                let finalMessage = """
+                    === Process Completed ===
+                    ✓ File copied to: \(dummyFilePath)
+                    ✓ WallpaperAgent killed
+                    ✓ Wal command executed
+                    ✓ Accent color updated from wal colors
+                    ===============================
                     """
 
-                do {
-                    if fileManager.fileExists(atPath: logPath) {
-                        if var existingContent = try? String(
-                            contentsOfFile: logPath, encoding: .utf8)
-                        {
-                            existingContent += "\n" + logMessage
-                            try existingContent.write(
-                                toFile: logPath, atomically: true, encoding: .utf8)
-                        }
-                    } else {
-                        try logMessage.write(toFile: logPath, atomically: true, encoding: .utf8)
-                    }
-                } catch {
-                    print("Could not write to log: \(error)")
+                print("Wallpaper switching process completed")
+                print("✓ File copied to: \(dummyFilePath)")
+                print("✓ WallpaperAgent killed")
+                print("✓ Wal command executed")
+                print("✓ Accent color updated from wal colors")
+                print("===============================")
+
+                // Log completion to file
+                if var existingContent = try? String(
+                    contentsOfFile: logPath, encoding: .utf8)
+                {
+                    existingContent += "\n" + finalMessage
+                    try? existingContent.write(
+                        toFile: logPath, atomically: true, encoding: .utf8)
                 }
-
-                print("Setting wallpaper: \(wallpaper.name)")
-                print("Dummy file path: \(dummyFilePath)")
-                print("Wal binary path: \(settingsManager.config.walBinaryPath)")
-                print("Current working directory: \(fileManager.currentDirectoryPath)")
-                print("Home directory: \(NSHomeDirectory())")
-                print("PATH: \(ProcessInfo.processInfo.environment["PATH"] ?? "Not set")")
-
-                // Check if wal binary exists
-                print(
-                    "Checking wal binary at configured path: \(settingsManager.config.walBinaryPath)"
-                )
-                if !fileManager.fileExists(atPath: settingsManager.config.walBinaryPath) {
-                    print(
-                        "WARNING: Wal binary not found at configured path: \(settingsManager.config.walBinaryPath)"
-                    )
-
-                    // Try common wal locations
-                    let commonWalPaths = [
-                        "/usr/local/bin/wal",
-                        "/opt/homebrew/bin/wal",
-                        "/usr/bin/wal",
-                        "/Volumes/NightSky/babaisalive/.local/bin/wal",
-                        NSHomeDirectory() + "/.local/bin/wal",
-                        NSHomeDirectory() + "/bin/wal",
-                    ]
-
-                    var foundWal = false
-                    for path in commonWalPaths {
-                        if fileManager.fileExists(atPath: path) {
-                            print("✓ Found wal at: \(path)")
-                            settingsManager.config.walBinaryPath = path
-                            foundWal = true
-                            break
-                        }
-                    }
-
-                    if !foundWal {
-                        print("ERROR: Could not find wal binary in common locations")
-                        return
-                    }
-                } else {
-                    print(
-                        "✓ Wal binary found at configured path: \(settingsManager.config.walBinaryPath)"
-                    )
-                }
-
-                // Check if wal is executable
-                do {
-                    let attributes = try fileManager.attributesOfItem(
-                        atPath: settingsManager.config.walBinaryPath)
-                    if let permissions = attributes[.posixPermissions] as? NSNumber {
-                        let isExecutable = permissions.intValue & 0o111 != 0
-                        print(
-                            "Wal permissions: \(String(format: "%o", permissions.intValue)), executable: \(isExecutable)"
-                        )
-                        if !isExecutable {
-                            print("WARNING: Wal binary is not executable!")
-                        }
-                    }
-                } catch {
-                    print("Could not check wal permissions: \(error)")
-                }
-
-                // Copy the wallpaper file to the dummy location
-                if fileManager.fileExists(atPath: dummyFilePath) {
-                    try fileManager.removeItem(at: dummyFileURL)
-                }
-                try fileManager.copyItem(at: wallpaper.url, to: dummyFileURL)
-
-                // Kill WallpaperAgent to force macOS to reload wallpaper
-                let _ = await runShellCommand("killall WallpaperAgent")
-
-                // Run wal command with the selected wallpaper using configured backend
-                let walCommand =
-                    "\(settingsManager.config.walBinaryPath) -i \"\(dummyFilePath)\" -n --backend \(usedBackend.rawValue)"
-                print("Running wal command: \(walCommand)")
-                let walSuccess = await runShellCommand(walCommand)
-
-                if walSuccess {
-                    print("✓ Wal command completed successfully")
-                    // Wait a moment for wal to finish writing files
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1 second
-
-                    // Verify wal actually worked by checking if colors file was updated
-                    let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
-                    if fileManager.fileExists(atPath: walCachePath) {
-                        do {
-                            let colorsContent = try String(
-                                contentsOfFile: walCachePath, encoding: .utf8)
-                            let colorLines = colorsContent.components(separatedBy: .newlines).filter
-                            { !$0.isEmpty && $0.hasPrefix("#") }
-                            print("✓ Wal updated colors file with \(colorLines.count) colors")
-
-                            // Set system accent color from wal colors
-                            await setAccentColorFromWal()
-
-                            // Run pywalfox update if enabled
-                            if settingsManager.config.runPywalfox {
-                                print("Running pywalfox update...")
-                                let pywalfoxSuccess = await runShellCommand("pywalfox update")
-                                if pywalfoxSuccess {
-                                    print("✓ Pywalfox update completed successfully")
-                                } else {
-                                    print("✗ Pywalfox update failed")
-                                }
-                            }
-
-                            // Run custom shell script if configured
-                            if !settingsManager.config.customScriptPath.isEmpty {
-                                print("Running custom script: \(settingsManager.config.customScriptPath)")
-                                let scriptSuccess = await runShellCommand(settingsManager.config.customScriptPath)
-                                if scriptSuccess {
-                                    print("✓ Custom script completed successfully")
-                                } else {
-                                    print("✗ Custom script failed")
-                                }
-                            }
-                        } catch {
-                            print("Error reading wal colors: \(error)")
-                        }
-                    } else {
-                        print("WARNING: Wal colors file not found after command")
-                    }
-
-                    await MainActor.run {
-                        settingsManager.config.lastSelectedWallpaperPath = wallpaper.url.path
-
-                        let finalMessage = """
-                            === Process Completed ===
-                            ✓ File copied to: \(dummyFilePath)
-                            ✓ WallpaperAgent killed
-                            ✓ Wal command executed
-                            ✓ Accent color updated from wal colors
-                            ===============================
-                            """
-
-                        print("Wallpaper switching process completed")
-                        print("✓ File copied to: \(dummyFilePath)")
-                        print("✓ WallpaperAgent killed")
-                        print("✓ Wal command executed")
-                        print("✓ Accent color updated from wal colors")
-                        print("===============================")
-
-                        // Log completion to file
-                        do {
-                            let logPath = "/tmp/wallpaper_switcher.log"
-                            if var existingContent = try? String(
-                                contentsOfFile: logPath, encoding: .utf8)
-                            {
-                                existingContent += "\n" + finalMessage
-                                try existingContent.write(
-                                    toFile: logPath, atomically: true, encoding: .utf8)
-                            }
-                        } catch {
-                            print("Could not write completion to log: \(error)")
-                        }
-                    }
-                } else {
-                    print("✗ Wal command failed")
-                }
-            } catch {
-                print("Error setting wallpaper: \(error)")
             }
+        } else {
+            print("✗ Wal command failed")
         }
     }
 
