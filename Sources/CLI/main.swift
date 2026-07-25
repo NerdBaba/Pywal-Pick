@@ -3,6 +3,20 @@ import AppKit
 import UniformTypeIdentifiers
 import PywalPick
 
+final class AtomicBool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: Bool
+
+    init(_ value: Bool = false) {
+        self._value = value
+    }
+
+    var value: Bool {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
+    }
+}
+
 @MainActor
 func main() {
     let args = CommandLine.arguments.dropFirst()
@@ -19,6 +33,8 @@ func main() {
     var backend: WalBackend?
     var dryRun = false
     var noPywalfox = false
+    var playTransition = false
+    var transitionType: TransitionType?
     var filteredArgs: [String] = []
 
     var i = 0
@@ -37,6 +53,17 @@ func main() {
             noPywalfox = true
         } else if arg == "--dry-run" {
             dryRun = true
+        } else if arg == "--transition" {
+            playTransition = true
+        } else if arg == "--transition-type", i + 1 < remainingArgs.count {
+            i += 1
+            if let t = TransitionType(rawValue: remainingArgs[i].lowercased()) {
+                transitionType = t
+            } else {
+                print("Error: Unknown transition type '\(remainingArgs[i])'")
+                print("Available types: \(TransitionType.allCases.map { $0.rawValue }.joined(separator: ", "))")
+                exit(1)
+            }
         } else {
             filteredArgs.append(arg)
         }
@@ -45,16 +72,16 @@ func main() {
 
     switch command {
     case "random":
-        cmdRandom(backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
+        cmdRandom(backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
     case "update":
-        cmdUpdate(backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
+        cmdUpdate(backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
     case "set":
         guard let path = filteredArgs.first else {
             print("Error: 'set' requires a file path argument")
             print("Usage: wallpick set <path>")
             exit(1)
         }
-        cmdSet(path: path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
+        cmdSet(path: path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
     case "list":
         cmdList(query: filteredArgs.isEmpty ? nil : filteredArgs.joined(separator: " "))
     case "current":
@@ -86,10 +113,19 @@ func printUsage() {
       --backend <name>    Override the wal backend (haishoku, schemer2, colorthief, etc.)
       --no-pywalfox       Skip pywalfox update
       --dry-run           Print what would happen without executing
+      --transition        Play animated transition overlay (type: random by default)
+      --transition-type <type>
+                          Transition effect: fade | wipe | grow | random
+                          (overrides the saved setting; default when --transition
+                          is used without this flag is random)
 
     Examples:
       wallpick random
       wallpick random --backend fast_colorthief
+      wallpick random --transition
+      wallpick random --transition --transition-type grow
+      wallpick update --transition --transition-type wipe
+      wallpick set /path/to/wallpaper.jpg --transition --transition-type fade
       wallpick update
       wallpick set /path/to/wallpaper.jpg
       wallpick list sunset
@@ -157,11 +193,65 @@ func findWalBinary() -> String {
     fatalError("Error: wal binary not found. Configure the path in the GUI app Settings.")
 }
 
-func runWal(wallpaperPath: String, backend: WalBackend? = nil, dryRun: Bool = false, noPywalfox: Bool = false) -> Bool {
+// The actual wal application logic - used both directly and after transition
+func performWalApplication(
+    walPath: String,
+    dummyFile: String,
+    usedBackend: WalBackend,
+    noPywalfox: Bool,
+    runPywalfox: Bool,
+    customScript: String
+) -> Bool {
+    _ = runShellCommand("killall WallpaperAgent")
+
+    let command = "\(walPath) -i \"\(dummyFile)\" -n --backend \(usedBackend.rawValue)"
+    print("Running: \(command)")
+    let walSuccess = runShellCommand(command)
+
+    if walSuccess {
+        Thread.sleep(forTimeInterval: 1)
+
+        let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
+        if FileManager.default.fileExists(atPath: walCachePath),
+           let colorsContent = try? String(contentsOfFile: walCachePath, encoding: .utf8) {
+            let colorLines = colorsContent.components(separatedBy: .newlines)
+                .filter { !$0.isEmpty && $0.hasPrefix("#") }
+            print("✓ Wal updated colors: \(colorLines.count) colors extracted")
+
+            setAccentColorFromWal()
+
+            if !noPywalfox && runPywalfox {
+                print("Running pywalfox update...")
+                _ = runShellCommand("pywalfox update")
+            }
+
+            if !customScript.isEmpty {
+                print("Running custom script: \(customScript)")
+                _ = runShellCommand(customScript)
+            }
+        }
+    } else {
+        print("✗ Wal command failed")
+    }
+
+    return walSuccess
+}
+
+@MainActor
+func runWal(
+    wallpaperPath: String,
+    backend: WalBackend? = nil,
+    dryRun: Bool = false,
+    noPywalfox: Bool = false,
+    playTransition: Bool = false,
+    transitionType: TransitionType? = nil
+) -> Bool {
     let walPath = findWalBinary()
     let config = AppConfig.load()
     let dummyFile = config.dummyWallpaperFile
     let usedBackend = backend ?? config.selectedBackend
+    // CLI default: random. Explicit flag or saved setting overrides.
+    let effect = transitionType ?? config.transitionType
 
     let sourceURL = URL(fileURLWithPath: wallpaperPath)
     if !FileManager.default.fileExists(atPath: sourceURL.path) {
@@ -189,39 +279,70 @@ func runWal(wallpaperPath: String, backend: WalBackend? = nil, dryRun: Bool = fa
         return true
     }
 
-    _ = runShellCommand("killall WallpaperAgent")
-
-    let command = "\(walPath) -i \"\(dummyFile)\" -n --backend \(usedBackend.rawValue)"
-    print("Running: \(command)")
-    let walSuccess = runShellCommand(command)
-
-    if walSuccess {
-        Thread.sleep(forTimeInterval: 1)
-
-        let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
-        if FileManager.default.fileExists(atPath: walCachePath),
-           let colorsContent = try? String(contentsOfFile: walCachePath, encoding: .utf8) {
-            let colorLines = colorsContent.components(separatedBy: .newlines)
-                .filter { !$0.isEmpty && $0.hasPrefix("#") }
-            print("✓ Wal updated colors: \(colorLines.count) colors extracted")
-
-            setAccentColorFromWal()
-
-            if !noPywalfox && config.runPywalfox {
-                print("Running pywalfox update...")
-                _ = runShellCommand("pywalfox update")
-            }
-
-            if !config.customScriptPath.isEmpty {
-                print("Running custom script: \(config.customScriptPath)")
-                _ = runShellCommand(config.customScriptPath)
-            }
-        }
-    } else {
-        print("✗ Wal command failed")
+    guard playTransition else {
+        return performWalApplication(
+            walPath: walPath,
+            dummyFile: dummyFile,
+            usedBackend: usedBackend,
+            noPywalfox: noPywalfox,
+            runPywalfox: config.runPywalfox,
+            customScript: config.customScriptPath
+        )
     }
 
-    return walSuccess
+    let oldURL = currentDesktopImageURL() ?? sourceURL
+
+    // For the CLI we run the transition overlay AND the wal application
+    // concurrently: the overlay hides the desktop swap, while wal recolors
+    // underneath. The transition ends with a fade-out that reveals the
+    // already-changed wallpaper.
+    let walSemaphore = DispatchSemaphore(value: 0)
+    let walResult = AtomicBool(false)
+
+    // Kick off wal on a background thread so it runs in parallel with the
+    // animated overlay rather than waiting for it to finish.
+    DispatchQueue.global(qos: .userInitiated).async {
+        walResult.value = performWalApplication(
+            walPath: walPath,
+            dummyFile: dummyFile,
+            usedBackend: usedBackend,
+            noPywalfox: noPywalfox,
+            runPywalfox: config.runPywalfox,
+            customScript: config.customScriptPath
+        )
+        walSemaphore.signal()
+    }
+
+    let transitionSemaphore = DispatchSemaphore(value: 0)
+    TransitionOverlayController.shared.play(
+        oldURL: oldURL,
+        newURL: sourceURL,
+        type: effect,
+        duration: config.transitionDuration,
+        fps: config.transitionFPS
+    ) {
+        transitionSemaphore.signal()
+    }
+
+    // Wait for the transition to finish (wal is already running/pending).
+    // Hard safety timeout guarantees the CLI never hangs if the overlay
+    // animation fails to signal for any reason.
+    let deadline = Date().addingTimeInterval(config.transitionDuration + 2.0)
+    while transitionSemaphore.wait(timeout: .now() + 0.1) == .timedOut {
+        if Date() > deadline { break }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+    // Make sure wal has finished too before reporting success.
+    walSemaphore.wait()
+    return walResult.value
+}
+
+/// The image currently shown on the desktop, used as the "old" frame for the
+/// transition overlay.
+func currentDesktopImageURL() -> URL? {
+    guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
+    let url = NSWorkspace.shared.desktopImageURL(for: screen)
+    return url?.path.isEmpty == true ? nil : url
 }
 
 func setAccentColorFromWal() {
@@ -335,7 +456,7 @@ func runShellCommandOutput(_ command: String) -> String? {
 
 // MARK: - Commands
 
-func cmdRandom(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) {
+func cmdRandom(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransition: Bool = false, transitionType: TransitionType? = nil) {
     let wallpapers = discoverWallpapers()
     guard !wallpapers.isEmpty else {
         print("Error: No wallpapers found in configured folder.")
@@ -346,7 +467,9 @@ func cmdRandom(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) {
     let wallpaper = wallpapers[randomIndex]
 
     print("Selected: \(wallpaper.name)")
-    let success = runWal(wallpaperPath: wallpaper.url.path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
+    let success = MainActor.assumeIsolated {
+        runWal(wallpaperPath: wallpaper.url.path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
+    }
 
     if success && !dryRun {
         var updatedConfig = AppConfig.load()
@@ -358,7 +481,7 @@ func cmdRandom(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) {
     exit(success ? 0 : 1)
 }
 
-func cmdUpdate(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) {
+func cmdUpdate(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransition: Bool = false, transitionType: TransitionType? = nil) {
     let config = AppConfig.load()
     guard !config.lastSelectedWallpaperPath.isEmpty else {
         print("Error: No wallpaper has been set yet. Use 'wallpick random' or 'wallpick set <path>' first.")
@@ -373,11 +496,13 @@ func cmdUpdate(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) {
 
     let name = URL(fileURLWithPath: path).lastPathComponent
     print("Updating colors for: \(name)")
-    let success = runWal(wallpaperPath: path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
+    let success = MainActor.assumeIsolated {
+        runWal(wallpaperPath: path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
+    }
     exit(success ? 0 : 1)
 }
 
-func cmdSet(path: String, backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) {
+func cmdSet(path: String, backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransition: Bool = false, transitionType: TransitionType? = nil) {
     let fullPath = (path as NSString).expandingTildeInPath
     guard FileManager.default.fileExists(atPath: fullPath) else {
         print("Error: File not found: \(fullPath)")
@@ -386,7 +511,9 @@ func cmdSet(path: String, backend: WalBackend?, dryRun: Bool, noPywalfox: Bool) 
 
     let name = URL(fileURLWithPath: fullPath).lastPathComponent
     print("Setting wallpaper: \(name)")
-    let success = runWal(wallpaperPath: fullPath, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox)
+    let success = MainActor.assumeIsolated {
+        runWal(wallpaperPath: fullPath, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
+    }
 
     if success && !dryRun {
         var updatedConfig = AppConfig.load()
@@ -448,4 +575,8 @@ func formattedFileSize(_ size: Int64) -> String {
 }
 
 // Run
+// Initialize NSApplication for AppKit window operations (required for transition overlay)
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
+
 main()
