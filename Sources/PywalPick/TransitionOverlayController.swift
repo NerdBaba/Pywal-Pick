@@ -119,7 +119,7 @@ public final class TransitionOverlayController: @unchecked Sendable {
             window.contentView = transitionView
             // Force layout to ensure frame is set before animation starts
             transitionView.layoutSubtreeIfNeeded()
-            transitionView.displayIfNeeded()
+            transitionView.setProgress(0)
             window.orderFrontRegardless()
             return (window, transitionView)
         }
@@ -389,17 +389,30 @@ struct TransitionImageView: View {
 }
 
 /// NSView that renders two NSImages with a grow transition effect.
-/// Uses direct Core Graphics clipping with NSBezierPath for the grow effect.
+/// Uses CAShapeLayer masking for compatibility at desktop window level.
 final class GrowTransitionView: NSView {
     let oldImage: NSImage?
     let newImage: NSImage?
     private var currentRadius: CGFloat = 0
+
+    private let newImageView = NSImageView()
+    private var maskLayer: CAShapeLayer?
 
     init(oldImage: NSImage?, newImage: NSImage?) {
         self.oldImage = oldImage
         self.newImage = newImage
         super.init(frame: .zero)
         wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+
+        if let oldImg = oldImage {
+            let oldView = NSImageView()
+            oldView.image = oldImg
+            oldView.imageScaling = .scaleAxesIndependently
+            oldView.imageAlignment = .alignCenter
+            oldView.autoresizingMask = [.width, .height]
+            addSubview(oldView)
+        }
     }
 
     @available(*, unavailable)
@@ -407,49 +420,52 @@ final class GrowTransitionView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
+    override func layout() {
+        super.layout()
 
-        // Draw black background
-        context.setFillColor(NSColor.black.cgColor)
-        context.fill(dirtyRect)
-
-        // Draw old image (full screen - always visible)
-        if let oldImg = oldImage, let cgOld = oldImg.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            let rect = coverRect(for: oldImg, in: bounds.size)
-            context.draw(cgOld, in: rect)
+        if newImageView.superview == nil, let newImg = newImage {
+            newImageView.image = newImg
+            newImageView.imageScaling = .scaleAxesIndependently
+            newImageView.imageAlignment = .alignCenter
+            newImageView.wantsLayer = true
+            newImageView.autoresizingMask = [.width, .height]
+            newImageView.frame = bounds
+            addSubview(newImageView)
+            applyMask()
         }
 
-        // Draw new image clipped to a growing circle
-        if let newImg = newImage,
-           let cgNew = newImg.cgImage(forProposedRect: nil, context: nil, hints: nil),
-           currentRadius > 0 {
-            context.saveGState()
-
-            let center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
-            let clipRect = CGRect(
-                x: center.x - currentRadius,
-                y: center.y - currentRadius,
-                width: currentRadius * 2,
-                height: currentRadius * 2
-            )
-
-            // Clip to circular region
-            let clipPath = NSBezierPath(ovalIn: clipRect)
-            clipPath.addClip()
-
-            let rect = coverRect(for: newImg, in: bounds.size)
-            context.draw(cgNew, in: rect)
-
-            context.restoreGState()
+        for subview in subviews where subview !== newImageView {
+            if let oldView = subview as? NSImageView {
+                oldView.frame = bounds
+            }
         }
+    }
+
+    private func applyMask() {
+        newImageView.wantsLayer = true
+        newImageView.layer?.mask = nil
+
+        let center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        let diameter = currentRadius * 2
+
+        let mask = CAShapeLayer()
+        mask.frame = bounds
+        mask.path = CGPath(
+            ellipseIn: CGRect(x: center.x - currentRadius, y: center.y - currentRadius, width: diameter, height: diameter),
+            transform: nil
+        )
+        newImageView.layer?.mask = mask
+        maskLayer = mask
     }
 
     func setProgress(_ progress: Double) {
         let t = min(max(progress, 0), 1)
         let eased = t * t * (3 - 2 * t)
         currentRadius = eased * bounds.size.diagonal / 2
-        setNeedsDisplay(bounds)
+
+        DispatchQueue.main.async { [weak self] in
+            self?.applyMask()
+        }
     }
 }
 
