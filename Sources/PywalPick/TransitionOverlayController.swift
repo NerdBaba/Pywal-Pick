@@ -389,8 +389,7 @@ struct TransitionImageView: View {
 }
 
 /// NSView that renders two NSImages with a grow transition effect.
-/// Uses AppKit drawing directly to ensure consistent rendering in both
-/// GUI (full SwiftUI app) and CLI (minimal AppKit context) modes.
+/// Uses direct Core Graphics clipping with NSBezierPath for the grow effect.
 final class GrowTransitionView: NSView {
     let oldImage: NSImage?
     let newImage: NSImage?
@@ -400,6 +399,7 @@ final class GrowTransitionView: NSView {
         self.oldImage = oldImage
         self.newImage = newImage
         super.init(frame: .zero)
+        wantsLayer = true
     }
 
     @available(*, unavailable)
@@ -408,54 +408,39 @@ final class GrowTransitionView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.set()
-        dirtyRect.fill()
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
 
-        // Draw old image as background (full screen)
-        if let oldImg = oldImage {
-            let cgOld = oldImg.cgImage(forProposedRect: nil, context: nil, hints: nil)
-            guard let cgOld = cgOld else { return }
-            let imgSize = oldImg.size
-            guard imgSize.width > 0, imgSize.height > 0 else { return }
-            let scale = max(bounds.width / imgSize.width, bounds.height / imgSize.height)
-            let w = imgSize.width * scale
-            let h = imgSize.height * scale
-            let drawRect = CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
-            NSGraphicsContext.current?.cgContext.draw(cgOld, in: drawRect)
+        // Draw black background
+        context.setFillColor(NSColor.black.cgColor)
+        context.fill(dirtyRect)
+
+        // Draw old image (full screen - always visible)
+        if let oldImg = oldImage, let cgOld = oldImg.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            let rect = coverRect(for: oldImg, in: bounds.size)
+            context.draw(cgOld, in: rect)
         }
 
-        // Draw new image with growing circle mask
-        guard let newImg = newImage, currentRadius > 0 else { return }
-        let cgNew = newImg.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        guard let cgNew = cgNew else { return }
-
-        let center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
-
-        // Create a path that represents only the growing circle area
-        let clipPath = NSBezierPath(ovalIn: CGRect(
-            x: center.x - currentRadius,
-            y: center.y - currentRadius,
-            width: currentRadius * 2,
-            height: currentRadius * 2
-        ))
-
-        if let context = NSGraphicsContext.current?.cgContext {
+        // Draw new image clipped to a growing circle
+        if let newImg = newImage,
+           let cgNew = newImg.cgImage(forProposedRect: nil, context: nil, hints: nil),
+           currentRadius > 0 {
             context.saveGState()
+
+            let center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+            let clipRect = CGRect(
+                x: center.x - currentRadius,
+                y: center.y - currentRadius,
+                width: currentRadius * 2,
+                height: currentRadius * 2
+            )
+
+            // Clip to circular region
+            let clipPath = NSBezierPath(ovalIn: clipRect)
             clipPath.addClip()
 
-            let imgSize = newImg.size
-            guard imgSize.width > 0, imgSize.height > 0 else {
-                context.restoreGState()
-                return
-            }
+            let rect = coverRect(for: newImg, in: bounds.size)
+            context.draw(cgNew, in: rect)
 
-            // Scale to fill screen (aspect-fill)
-            let scale = max(bounds.width / imgSize.width, bounds.height / imgSize.height)
-            let w = imgSize.width * scale
-            let h = imgSize.height * scale
-            let drawRect = CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
-
-            context.draw(cgNew, in: drawRect)
             context.restoreGState()
         }
     }
