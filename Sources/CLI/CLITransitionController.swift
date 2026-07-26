@@ -24,7 +24,8 @@ final class CLITransitionController: @unchecked Sendable {
     func showOverlay(oldURL: URL) {
         closeOverlays()
 
-        guard let oldImage = NSImage(contentsOf: oldURL) else {
+        guard let oldImage = NSImage(contentsOf: oldURL),
+              let cgImage = oldImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             print("⚠ Transition overlay: could not load old wallpaper from \(oldURL.path)")
             return
         }
@@ -33,7 +34,7 @@ final class CLITransitionController: @unchecked Sendable {
             let window = OverlayWindow(screen: screen)
             let view = NSView()
             view.wantsLayer = true
-            view.layer?.contents = oldImage
+            view.layer?.contents = cgImage
             view.layer?.contentsGravity = .resizeAspectFill
             view.frame = window.contentLayoutRect
             view.autoresizingMask = [.width, .height]
@@ -83,6 +84,7 @@ final class CLITransitionController: @unchecked Sendable {
 
     /// Cross-fade: window alpha goes to 0 over duration.
     private func animateFade(duration: Double, completion: @escaping () -> Void) {
+        guard !overlays.isEmpty else { completion(); return }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = duration
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -93,15 +95,17 @@ final class CLITransitionController: @unchecked Sendable {
     }
 
     /// Wipe: a white CALayer mask slides off the content view, revealing the
-    /// desktop from right to left.
+    /// desktop from left to right.
     private func animateWipe(duration: Double, completion: @escaping () -> Void) {
+        guard !overlays.isEmpty else { completion(); return }
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(completion)
         for (_, view) in overlays {
             guard let layer = view.layer else { continue }
             let mask = CALayer()
             mask.backgroundColor = NSColor.white.cgColor
             mask.frame = layer.bounds
             layer.mask = mask
-            CATransaction.flush()
 
             let anim = CABasicAnimation(keyPath: "position")
             anim.fromValue = NSValue(point: mask.position)
@@ -112,7 +116,7 @@ final class CLITransitionController: @unchecked Sendable {
             anim.isRemovedOnCompletion = false
             mask.add(anim, forKey: "wipe")
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05, execute: completion)
+        CATransaction.commit()
     }
 
     /// Grow / Ripple: a CAShapeLayer mask (even-odd fill) reveals the desktop
@@ -120,6 +124,9 @@ final class CLITransitionController: @unchecked Sendable {
     /// overlay's old wallpaper is still visible; inside the circle the new
     /// desktop wallpaper (already set by wal) shows through.
     private func animateGrowRipple(duration: Double, completion: @escaping () -> Void) {
+        guard !overlays.isEmpty else { completion(); return }
+        CATransaction.begin()
+        CATransaction.setCompletionBlock(completion)
         for (_, view) in overlays {
             guard let layer = view.layer else { continue }
             let bounds = layer.bounds
@@ -136,7 +143,6 @@ final class CLITransitionController: @unchecked Sendable {
             mask.path = startPath
 
             layer.mask = mask
-            CATransaction.flush()
 
             let endPath = CGMutablePath()
             endPath.addRect(bounds)
@@ -154,7 +160,7 @@ final class CLITransitionController: @unchecked Sendable {
             anim.isRemovedOnCompletion = false
             mask.add(anim, forKey: "grow")
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05, execute: completion)
+        CATransaction.commit()
     }
 }
 

@@ -295,7 +295,8 @@ func runWal(
     // thread's run loop keeps pumping — Core Animation can composite the
     // overlay windows while wal executes.
     var walResult = false
-    let walSemaphore = DispatchSemaphore(value: 0)
+    let group = DispatchGroup()
+    group.enter()
 
     DispatchQueue.global(qos: .userInitiated).async {
         walResult = performWalApplication(
@@ -306,12 +307,12 @@ func runWal(
             runPywalfox: config.runPywalfox,
             customScript: config.customScriptPath
         )
-        walSemaphore.signal()
+        group.leave()
     }
 
     // Keep the main run loop pumping while wal runs so overlay windows
     // stay composited on screen.
-    while walSemaphore.wait(timeout: .now()) == .timedOut {
+    while group.wait(timeout: .now()) == .timedOut {
         CFRunLoopRunInMode(.defaultMode, 0.01, false)
     }
 
@@ -324,7 +325,15 @@ func runWal(
         CFRunLoopStop(CFRunLoopGetMain())
     }
 
-    // Pump the run loop until the animation completes.
+    // Safety timeout: if animation completion never fires (e.g. CA
+    // transaction dropped), force-exit so the CLI doesn't hang forever.
+    let safetyTimeout = config.transitionDuration + 3.0
+    DispatchQueue.main.asyncAfter(deadline: .now() + safetyTimeout) {
+        CLITransitionController.shared.closeOverlays()
+        CFRunLoopStop(CFRunLoopGetMain())
+    }
+
+    // Pump the run loop until the animation completes (or safety timeout fires).
     CFRunLoopRun()
     return walResult
 }
