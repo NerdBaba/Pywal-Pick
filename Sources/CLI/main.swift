@@ -249,6 +249,21 @@ func runWal(
     let dummyDir = dummyURL.deletingLastPathComponent()
     try? FileManager.default.createDirectory(at: dummyDir, withIntermediateDirectories: true)
 
+    // CRITICAL: Capture the old wallpaper image BEFORE overwriting the dummy
+    // file. The desktop is typically configured to show dummy-file.jpg, so if
+    // we copy first, currentDesktopImageURL() points at the NEW image and the
+    // transition has nothing to animate from.
+    let oldImageForTransition: NSImage?
+    if playTransition && !dryRun {
+        oldImageForTransition = resolveOldWallpaperImage(
+            sourceURL: sourceURL,
+            dummyURL: dummyURL,
+            lastSelectedPath: config.lastSelectedWallpaperPath
+        )
+    } else {
+        oldImageForTransition = nil
+    }
+
     if FileManager.default.fileExists(atPath: dummyFile) {
         try? FileManager.default.removeItem(at: dummyURL)
     }
@@ -276,18 +291,30 @@ func runWal(
         )
     }
 
-    let oldURL = currentDesktopImageURL() ?? sourceURL
-    print("Debug: oldURL=\(oldURL.path), sourceURL=\(sourceURL.path), fallback=\(currentDesktopImageURL() == nil ? "yes" : "no")")
-
     let resolvedEffect = effect.resolved
-    print("Debug: transitionType=\(effect.rawValue), resolved=\(resolvedEffect.rawValue), duration=\(config.transitionDuration)s, fps=\(config.transitionFPS), playTransition=\(playTransition)")
+    print("Debug: transitionType=\(effect.rawValue), resolved=\(resolvedEffect.rawValue), duration=\(config.transitionDuration)s, fps=\(config.transitionFPS)")
 
-    // Persistent overlay pattern (inspired by WalBridge):
-    // 1. Show overlay windows with OLD wallpaper (covers the desktop)
-    // 2. Run wal behind the overlays (user sees nothing change)
-    // 3. Animate overlays away (revealing the new wallpaper underneath)
-    // This avoids the black-background problem entirely.
-    CLITransitionController.shared.showOverlay(oldURL: oldURL)
+    // Dual-image overlay (same idea as desktop GrowTransitionView):
+    // paint OLD + NEW inside an opaque window, then reveal NEW via mask/opacity.
+    // Do NOT punch holes in an opaque window — that only shows black, not the desktop.
+    let newImage = loadWallpaperImage(from: sourceURL)
+        ?? loadWallpaperImage(from: dummyURL)
+    let oldImage = oldImageForTransition ?? newImage
+
+    guard let oldImage, let newImage else {
+        print("⚠ Transition: no image available — applying wal without overlay")
+        return performWalApplication(
+            walPath: walPath,
+            dummyFile: dummyFile,
+            usedBackend: usedBackend,
+            noPywalfox: noPywalfox,
+            runPywalfox: config.runPywalfox,
+            customScript: config.customScriptPath
+        )
+    }
+
+    print("Debug: overlay old size=\(oldImage.size), new size=\(newImage.size)")
+    CLITransitionController.shared.showOverlay(oldImage: oldImage, newImage: newImage)
 
     // Brief pump so the windows render on screen.
     // ~200ms (~12 frames at 60fps) gives the window server time to composite
@@ -299,12 +326,12 @@ func runWal(
     // Run wal behind the overlays on a background thread so the main
     // thread's run loop keeps pumping — Core Animation can composite the
     // overlay windows while wal executes.
-    var walResult = false
+    let walBox = WalResultBox()
     let group = DispatchGroup()
     group.enter()
 
     DispatchQueue.global(qos: .userInitiated).async {
-        walResult = performWalApplication(
+        let result = performWalApplication(
             walPath: walPath,
             dummyFile: dummyFile,
             usedBackend: usedBackend,
@@ -312,6 +339,7 @@ func runWal(
             runPywalfox: config.runPywalfox,
             customScript: config.customScriptPath
         )
+        walBox.value = result
         group.leave()
     }
 
@@ -320,6 +348,7 @@ func runWal(
     while group.wait(timeout: .now()) == .timedOut {
         RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
     }
+    let walResult = walBox.value
 
     // Animate overlays away, revealing the new wallpaper
     CLITransitionController.shared.animateOverlays(
@@ -343,12 +372,56 @@ func runWal(
     return walResult
 }
 
+/// Resolve and load the image currently on the desktop for the transition
+/// "from" frame. Must be called **before** the dummy file is overwritten.
+///
+/// Order of preference:
+/// 1. System desktop image URL (if it is a real image file)
+/// 2. Configured dummy wallpaper file (what wal/kill WallpaperAgent reloads)
+/// 3. Last selected wallpaper path from config
+/// 4. The new source wallpaper (weak fallback — transition will look like a no-op)
+func resolveOldWallpaperImage(
+    sourceURL: URL,
+    dummyURL: URL,
+    lastSelectedPath: String
+) -> NSImage? {
+    var candidates: [(String, URL)] = []
+
+    if let desktopURL = currentDesktopImageURL() {
+        candidates.append(("desktopImageURL", desktopURL))
+    }
+    candidates.append(("dummy", dummyURL))
+    if !lastSelectedPath.isEmpty {
+        candidates.append(("lastSelected", URL(fileURLWithPath: lastSelectedPath)))
+    }
+    candidates.append(("source", sourceURL))
+
+    for (label, url) in candidates {
+        if let image = loadWallpaperImage(from: url) {
+            print("Debug: old wallpaper from \(label)=\(url.path) size=\(image.size)")
+            return image
+        } else {
+            print("Debug: skipped \(label)=\(url.path) (missing or not an image file)")
+        }
+    }
+    return nil
+}
+
 /// The image currently shown on the desktop, used as the "old" frame for the
-/// transition overlay.
+/// transition overlay. Returns nil for empty paths or directories (dynamic /
+/// slideshow wallpapers — `NSImage(contentsOf:)` fails on those).
 func currentDesktopImageURL() -> URL? {
     guard let screen = NSScreen.main ?? NSScreen.screens.first else { return nil }
-    let url = NSWorkspace.shared.desktopImageURL(for: screen)
-    return url?.path.isEmpty == true ? nil : url
+    guard let url = NSWorkspace.shared.desktopImageURL(for: screen), !url.path.isEmpty else {
+        return nil
+    }
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+          !isDirectory.boolValue
+    else {
+        return nil
+    }
+    return url
 }
 
 func setAccentColorFromWal() {
@@ -580,9 +653,20 @@ func formattedFileSize(_ size: Int64) -> String {
     return formatter.string(fromByteCount: size)
 }
 
+/// Thread-safe box for wal result from a background queue.
+private final class WalResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = false
+    var value: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _value }
+        set { lock.lock(); defer { lock.unlock() }; _value = newValue }
+    }
+}
+
 // Run
-// Initialize NSApplication for AppKit window operations (required for transition overlay)
+// Initialize NSApplication for AppKit window operations (required for transition overlay).
+// .accessory keeps us out of the Dock while still allowing desktop-level windows.
 let app = NSApplication.shared
-app.setActivationPolicy(.regular)
+app.setActivationPolicy(.accessory)
 
 main()

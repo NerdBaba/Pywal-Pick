@@ -153,70 +153,27 @@ Added `ctx.setFillColor(NSColor.black.cgColor)` + `ctx.fill(bounds)` at the star
 ### Symptom
 `wallpick random --transition` shows overlay windows that are opaque black — the animation (fade/wipe/grow) IS visible as a black ripple/fade, but the old wallpaper image is never displayed. The overlay is just a black rectangle covering the screen.
 
-### What works
-- Desktop app (`TransitionOverlayController` + `GrowTransitionView`) shows old wallpaper correctly
-- `GrowTransitionView` uses `CALayer.contents = oldImage` (NSImage) inside a sublayer — works
-- `OverlayWindow` with `isOpaque=true, backgroundColor=.black` — animation is visible
-- `orderFrontRegardless()` — window appears on screen
+### Root causes (fixed)
 
-### What doesn't work (tried so far)
-1. **Direct `layer.contents = cgImage`** (original approach) — black
-2. **Sublayer approach** (`ImageOverlayView` with `CALayer` sublayer, `NSImage` directly) — still black
-3. **Longer RunLoop pump** (200ms, 12 iterations) — doesn't affect image rendering
-4. **`NSImage` instead of `CGImage`** — no difference
+#### RC1: `ImageOverlayView` never enabled layer-backing
+`ImageOverlayView` deliberately avoided `wantsLayer = true` and only called `layer?.addSublayer(imageLayer)` in `layout()`. Because no one set `wantsLayer`, `layer` stayed `nil`, the image sublayer was never attached, and the opaque black `OverlayWindow` was all that appeared.
 
-### Key differences between CLI and desktop overlay
+**Fix**: Match `GrowTransitionView` — set `wantsLayer = true` in `init`, add the image sublayer immediately, use `CGImage` for `contents`, call `layoutSubtreeIfNeeded()` + `display()` + `CATransaction.flush()` after attaching the content view.
 
-| Factor | Desktop (works) | CLI (black) |
-|--------|----------------|-------------|
-| Window level | `.desktopWindow` | `.desktopWindow + 1` |
-| Event loop | `NSApp.run()` | `CFRunLoopRun()` |
-| Image setup | `GrowTransitionView` as contentView | `ImageOverlayView` as contentView |
-| Layer approach | Sublayer with `contents = NSImage` | Sublayer with `contents = NSImage` |
-| Window config | `isOpaque=true, bg=.black` | `isOpaque=true, bg=.black` |
+#### RC2: Dummy file overwritten before capturing the old image
+`runWal` copied the *new* wallpaper onto `dummy-file.jpg` **before** resolving `currentDesktopImageURL()`. On this setup the desktop picture URL *is* the dummy file, so the "old" frame was actually the new wallpaper (or a half-written state). Combined with RC1 this looked like: instant swap, then a black ripple.
 
-### Hypotheses
+**Fix**: Load/resolve the old `NSImage` **before** deleting/copying the dummy file (`resolveOldWallpaperImage`), then pass the in-memory image into `showOverlay(oldImage:)`.
 
-#### H1: `currentDesktopImageURL()` returns wrong URL
-`NSWorkspace.shared.desktopImageURL(for:)` may return:
-- A directory URL (dynamic wallpapers/slideshow) → `NSImage(contentsOf:)` returns nil → fallback to `sourceURL` (new wallpaper) → overlay shows new image (which becomes old after wal runs, so user sees "immediate swap")
-- The new wallpaper URL if called after a previous wal run
-- Nil entirely → falls back to `sourceURL`
-
-**Evidence**: User reports "wallpapers swap immediately then black ripple plays" — this could mean the overlay shows the NEW wallpaper (which is already on screen), so the "swap" appears instant.
-
-**Fix needed**: Add more debug logging to confirm what URL is being used. Check if `NSImage(contentsOf: oldURL)` returns nil.
-
-#### H2: Window level `desktopWindow + 1` blocks image compositing
-The WindowServer may handle image content differently at `+1` vs exact `.desktopWindow` level. Desktop overlay works at exact `.desktopWindow`.
-
-**Test**: Try changing `OverlayWindow` level to `.desktopWindow` (without +1).
-
-#### H3: `CFRunLoopRun()` doesn't drive CA commits for image layers
-The CLI uses `CFRunLoopRun()` instead of `NSApp.run()`. Core Animation may need the NSApplication event loop to composite image layers (not just animation layers).
-
-**Evidence**: Animations (fade alpha, wipe mask, grow mask) work because they use `CABasicAnimation` which CA handles independently. But static image content may need the full NSApp compositing pipeline.
-
-**Test**: Try adding `CATransaction.flush()` after `showOverlay()` to force immediate compositing.
-
-#### H4: Sublayer frame is zero on first layout
-`ImageOverlayView.layout()` sets `imageLayer.frame = bounds` and adds the sublayer. But `bounds` might be `.zero` at first layout if the view hasn't been sized yet.
-
-**Test**: Add logging in `layout()` to print `bounds` size.
+#### RC3: Directory / dynamic wallpaper URLs
+`NSWorkspace.desktopImageURL` can return a directory. Reject directories; fall back through dummy → lastSelected → source.
 
 ### Files involved
-- `Sources/CLI/CLITransitionController.swift` — `showOverlay()`, `ImageOverlayView`, `OverlayWindow`
-- `Sources/CLI/main.swift` — `runWal()` transition section (line 279-343), `currentDesktopImageURL()`
-- `Sources/PywalPick/TransitionOverlayController.swift` — working desktop overlay (reference)
+- `Sources/CLI/CLITransitionController.swift` — `ImageOverlayView`, `showOverlay(oldImage:)`, `loadWallpaperImage`
+- `Sources/CLI/main.swift` — `resolveOldWallpaperImage`, capture-before-copy in `runWal`
 
-### Debug logging added
-- `main.swift:280` — prints `oldURL`, `sourceURL`, and whether fallback was used
-- `CLITransitionController.swift:31-33` — prints warning if `NSImage(contentsOf:)` returns nil
-
-### Suggested next steps
-1. Run `wallpick random --transition` and check console for the debug output — is `oldURL` correct? Is fallback "yes"?
-2. If fallback is "yes", `currentDesktopImageURL()` is returning nil — investigate why
-3. If `oldURL` is correct but image still black, try `CATransaction.flush()` after overlay creation
-4. If still black, try window level `.desktopWindow` (without +1)
-5. If still black, add logging in `ImageOverlayView.layout()` to confirm `bounds` and `superlayer` state
-6. Consider trying `NSHostingView(rootView: WallpaperImageView(image: oldImage))` like the desktop app does for fade/wipe (bypasses all CALayer concerns)
+### Verified
+```
+wallpick random --transition --transition-type grow|fade|wipe --no-pywalfox
+```
+Loads old image from desktop/dummy before overwrite, completes animation, exits cleanly.
