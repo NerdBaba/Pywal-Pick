@@ -18,24 +18,24 @@ final class CLITransitionController: @unchecked Sendable {
     private init() {}
 
     /// Create overlay windows on every screen showing `oldURL` wallpaper.
-    /// Each overlay is a transparent borderless window at desktopWindow + 1
-    /// whose content view's CALayer displays the image via .contents.
+    /// Each overlay is a borderless window at desktopWindow + 1 whose content
+    /// view uses a CALayer sublayer to display the old wallpaper image.
+    ///
+    /// Uses a sublayer (not `layer.contents`) matching the proven
+    /// `GrowTransitionView` pattern — setting `contents` directly on a
+    /// layer-backed NSView's root layer renders black on macOS.
     @MainActor
     func showOverlay(oldURL: URL) {
         closeOverlays()
 
-        guard let oldImage = NSImage(contentsOf: oldURL),
-              let cgImage = oldImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        guard let oldImage = NSImage(contentsOf: oldURL) else {
             print("⚠ Transition overlay: could not load old wallpaper from \(oldURL.path)")
             return
         }
 
         overlays = NSScreen.screens.map { screen in
             let window = OverlayWindow(screen: screen)
-            let view = NSView()
-            view.wantsLayer = true
-            view.layer?.contents = cgImage
-            view.layer?.contentsGravity = .resizeAspectFill
+            let view = ImageOverlayView(image: oldImage)
             view.frame = window.contentLayoutRect
             view.autoresizingMask = [.width, .height]
             window.contentView = view
@@ -164,9 +164,44 @@ final class CLITransitionController: @unchecked Sendable {
     }
 }
 
-/// Transparent borderless window at desktopWindow + 1 level, positioned above
+/// An NSView that displays a wallpaper image via a CALayer sublayer.
+/// Matches the proven `GrowTransitionView` pattern: the image lives in a
+/// sublayer of the view's backing layer, NOT set directly on `layer.contents`.
+/// Setting `contents` on a plain NSView's root layer renders black at desktop
+/// window level on macOS — sublayers bypass this bug.
+private final class ImageOverlayView: NSView {
+    private let imageLayer = CALayer()
+
+    init(image: NSImage) {
+        super.init(frame: .zero)
+        // Do NOT set wantsLayer here — the parent (OverlayWindow.contentView)
+        // handles layer-backing. We only add our sublayer to the tree.
+        imageLayer.contents = image
+        imageLayer.contentsGravity = .resizeAspectFill
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        imageLayer.frame = bounds
+        // Add sublayer on first layout when backing layer is available
+        if imageLayer.superlayer == nil {
+            layer?.addSublayer(imageLayer)
+        }
+    }
+}
+
+/// Opaque borderless window at desktopWindow + 1 level, positioned above
 /// the system desktop wallpaper but below desktop icons and normal windows.
 /// Click-through and invisible to window cycling.
+///
+/// Uses isOpaque=true + backgroundColor=.black (matching Mural and DesktopOverlay)
+/// rather than transparent windows — the WindowServer may skip compositing
+/// transparent desktop-level windows on modern macOS.
 final class OverlayWindow: NSWindow {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -181,8 +216,8 @@ final class OverlayWindow: NSWindow {
 
         level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) + 1)
         collectionBehavior = [.stationary, .ignoresCycle, .fullScreenNone]
-        isOpaque = false
-        backgroundColor = .clear
+        isOpaque = true
+        backgroundColor = .black
         hasShadow = false
         ignoresMouseEvents = true
         isReleasedWhenClosed = false

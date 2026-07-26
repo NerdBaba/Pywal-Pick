@@ -277,6 +277,7 @@ func runWal(
     }
 
     let oldURL = currentDesktopImageURL() ?? sourceURL
+    print("Debug: oldURL=\(oldURL.path), sourceURL=\(sourceURL.path), fallback=\(currentDesktopImageURL() == nil ? "yes" : "no")")
 
     let resolvedEffect = effect.resolved
     print("Debug: transitionType=\(effect.rawValue), resolved=\(resolvedEffect.rawValue), duration=\(config.transitionDuration)s, fps=\(config.transitionFPS), playTransition=\(playTransition)")
@@ -288,8 +289,12 @@ func runWal(
     // This avoids the black-background problem entirely.
     CLITransitionController.shared.showOverlay(oldURL: oldURL)
 
-    // Brief pump so the windows render on screen
-    CFRunLoopRunInMode(.defaultMode, 0.05, false)
+    // Brief pump so the windows render on screen.
+    // ~200ms (~12 frames at 60fps) gives the window server time to composite
+    // the overlay windows before we start wal on a background thread.
+    for _ in 0..<12 {
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.016))
+    }
 
     // Run wal behind the overlays on a background thread so the main
     // thread's run loop keeps pumping — Core Animation can composite the
@@ -313,7 +318,7 @@ func runWal(
     // Keep the main run loop pumping while wal runs so overlay windows
     // stay composited on screen.
     while group.wait(timeout: .now()) == .timedOut {
-        CFRunLoopRunInMode(.defaultMode, 0.01, false)
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
     }
 
     // Animate overlays away, revealing the new wallpaper
