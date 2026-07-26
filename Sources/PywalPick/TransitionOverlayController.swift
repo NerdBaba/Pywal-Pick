@@ -102,6 +102,71 @@ public final class TransitionOverlayController: @unchecked Sendable {
         tick(currentStep: 1)
     }
 
+    /// CLI version of play() that uses CADisplayLink for vsync-synchronized frame timing.
+    /// Works with CFRunLoopRun() in CLI context (no CVDisplayLink from NSApp.run()).
+    @MainActor
+    public func playCLI(
+        oldURL: URL,
+        newURL: URL,
+        type: TransitionType,
+        duration: Double,
+        fps: Int,
+        completion: @escaping () -> Void
+    ) {
+        let effect = type.resolved
+        let oldImage = NSImage(contentsOf: oldURL) ?? NSImage(contentsOf: newURL)
+        let newImage = NSImage(contentsOf: newURL) ?? oldImage
+
+        // For grow effect, delegate to AppKit-only implementation (same as play())
+        if effect == .grow {
+            playGrowTransition(
+                oldImage: oldImage,
+                newImage: newImage,
+                duration: duration,
+                fps: fps,
+                completion: completion
+            )
+            return
+        }
+
+        let progress = ProgressObject()
+        let windows: [(NSWindow, NSHostingView, CGSize)] = NSScreen.screens.map { screen in
+            let window = DesktopTransitionWindow(screen: screen)
+            let screenSize = window.contentLayoutRect.size
+            let hosting = NSHostingView(rootView: TransitionImageView(
+                progress: progress,
+                oldImage: oldImage,
+                newImage: newImage,
+                effect: effect,
+                screenSize: screenSize
+            ))
+            hosting.frame = window.contentLayoutRect
+            hosting.autoresizingMask = [.width, .height]
+            window.contentView = hosting
+            window.orderFrontRegardless()
+            return (window, hosting, screenSize)
+        }
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+        // On macOS, create display link via NSScreen (CADisplayLink.init(target:selector:) is unavailable)
+        guard let screen = NSScreen.main else {
+            completion()
+            return
+        }
+        let displayLink = screen.displayLink(target: CLIDisplayLinkHandler.self, selector: #selector(CLIDisplayLinkHandler.displayLinkCallback(_:)))
+        let handler = CLIDisplayLinkHandler(
+            progress: progress,
+            windows: windows,
+            duration: duration,
+            startTime: startTime,
+            completion: completion
+        )
+        displayLink.add(to: RunLoop.current, forMode: RunLoop.Mode.common)
+
+        // Store handler as associated object on displayLink to keep it alive
+        objc_setAssociatedObject(displayLink, displayLinkKey, handler, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
     /// AppKit-only grow transition that bypasses SwiftUI for consistent rendering.
     @MainActor
     private func playGrowTransition(
@@ -388,31 +453,33 @@ struct TransitionImageView: View {
     }
 }
 
-/// NSView that renders two NSImages with a grow transition effect.
-/// Uses CAShapeLayer masking for compatibility at desktop window level.
+/// Renders the old wallpaper as a full-screen background and reveals
+/// the new wallpaper through a growing circular mask using two CALayer
+/// sublayers (no NSImageView, no draw(_:) clipping) — matching the
+/// proven CLIGrowView pattern for reliable rendering at desktop window level.
 final class GrowTransitionView: NSView {
-    let oldImage: NSImage?
-    let newImage: NSImage?
+    private let oldImageLayer = CALayer()
+    private let newImageLayer = CALayer()
+    private let shapeMask = CAShapeLayer()
+    private var oldImage: NSImage?
+    private var newImage: NSImage?
     private var currentRadius: CGFloat = 0
-
-    private let newImageView = NSImageView()
-    private var maskLayer: CAShapeLayer?
 
     init(oldImage: NSImage?, newImage: NSImage?) {
         self.oldImage = oldImage
         self.newImage = newImage
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
 
-        if let oldImg = oldImage {
-            let oldView = NSImageView()
-            oldView.image = oldImg
-            oldView.imageScaling = .scaleAxesIndependently
-            oldView.imageAlignment = .alignCenter
-            oldView.autoresizingMask = [.width, .height]
-            addSubview(oldView)
-        }
+        oldImageLayer.contents = oldImage
+        oldImageLayer.contentsGravity = .resizeAspectFill
+
+        newImageLayer.contents = newImage
+        newImageLayer.contentsGravity = .resizeAspectFill
+        newImageLayer.mask = shapeMask
+
+        layer?.addSublayer(oldImageLayer)
+        layer?.addSublayer(newImageLayer)
     }
 
     @available(*, unavailable)
@@ -420,52 +487,33 @@ final class GrowTransitionView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func layout() {
-        super.layout()
-
-        if newImageView.superview == nil, let newImg = newImage {
-            newImageView.image = newImg
-            newImageView.imageScaling = .scaleAxesIndependently
-            newImageView.imageAlignment = .alignCenter
-            newImageView.wantsLayer = true
-            newImageView.autoresizingMask = [.width, .height]
-            newImageView.frame = bounds
-            addSubview(newImageView)
-            applyMask()
-        }
-
-        for subview in subviews where subview !== newImageView {
-            if let oldView = subview as? NSImageView {
-                oldView.frame = bounds
-            }
-        }
-    }
-
-    private func applyMask() {
-        newImageView.wantsLayer = true
-        newImageView.layer?.mask = nil
-
-        let center = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
-        let diameter = currentRadius * 2
-
-        let mask = CAShapeLayer()
-        mask.frame = bounds
-        mask.path = CGPath(
-            ellipseIn: CGRect(x: center.x - currentRadius, y: center.y - currentRadius, width: diameter, height: diameter),
-            transform: nil
-        )
-        newImageView.layer?.mask = mask
-        maskLayer = mask
-    }
-
     func setProgress(_ progress: Double) {
         let t = min(max(progress, 0), 1)
         let eased = t * t * (3 - 2 * t)
         currentRadius = eased * bounds.size.diagonal / 2
+        updateMask()
+    }
 
-        DispatchQueue.main.async { [weak self] in
-            self?.applyMask()
-        }
+    private func updateMask() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        shapeMask.frame = bounds
+        shapeMask.path = CGPath(
+            ellipseIn: CGRect(
+                x: center.x - currentRadius,
+                y: center.y - currentRadius,
+                width: currentRadius * 2,
+                height: currentRadius * 2
+            ),
+            transform: nil
+        )
+    }
+
+    override func layout() {
+        super.layout()
+        oldImageLayer.frame = bounds
+        newImageLayer.frame = bounds
+        updateMask()
     }
 }
 
@@ -474,3 +522,51 @@ private extension CGSize {
         sqrt(width * width + height * height)
     }
 }
+
+/// Helper class to hold state for CADisplayLink callback.
+/// Must be a class (not struct) to be stored as an associated object on CADisplayLink.
+/// The callback is @objc so it can be called from the display link's run loop.
+@MainActor
+private final class CLIDisplayLinkHandler: @unchecked Sendable {
+    let progress: ProgressObject
+    let windows: [(NSWindow, NSHostingView<TransitionImageView>, CGSize)]
+    let duration: Double
+    let startTime: CFAbsoluteTime
+    let completion: () -> Void
+
+    init(
+        progress: ProgressObject,
+        windows: [(NSWindow, NSHostingView<TransitionImageView>, CGSize)],
+        duration: Double,
+        startTime: CFAbsoluteTime,
+        completion: @escaping () -> Void
+    ) {
+        self.progress = progress
+        self.windows = windows
+        self.duration = duration
+        self.startTime = startTime
+        self.completion = completion
+    }
+
+    @objc func displayLinkCallback(_ displayLink: CADisplayLink) {
+        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+        let progressValue = min(elapsed / duration, 1.0)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        progress.value = progressValue
+        CATransaction.commit()
+
+        if progressValue >= 1.0 {
+            displayLink.invalidate()
+            // Clean up windows
+            for (window, _, _) in windows {
+                window.orderOut(nil as Any?)
+            }
+            completion()
+        }
+    }
+}
+
+/// Associated object key for storing CLIDisplayLinkHandler on CADisplayLink.
+@MainActor private let displayLinkKey = UnsafeRawPointer(bitPattern: "displayLinkKey".hashValue)!

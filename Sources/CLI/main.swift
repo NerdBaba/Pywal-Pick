@@ -3,20 +3,6 @@ import AppKit
 import UniformTypeIdentifiers
 import PywalPick
 
-final class AtomicBool: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _value: Bool
-
-    init(_ value: Bool = false) {
-        self._value = value
-    }
-
-    var value: Bool {
-        get { lock.withLock { _value } }
-        set { lock.withLock { _value = newValue } }
-    }
-}
-
 @MainActor
 func main() {
     let args = CommandLine.arguments.dropFirst()
@@ -292,17 +278,21 @@ func runWal(
 
     let oldURL = currentDesktopImageURL() ?? sourceURL
 
-    // For the CLI we run the transition overlay AND the wal application
-    // concurrently: the overlay hides the desktop swap, while wal recolors
-    // underneath. The transition ends with a fade-out that reveals the
-    // already-changed wallpaper.
-    let walSemaphore = DispatchSemaphore(value: 0)
-    let walResult = AtomicBool(false)
+    let resolvedEffect = effect.resolved
+    print("Debug: transitionType=\(effect.rawValue), resolved=\(resolvedEffect.rawValue), duration=\(config.transitionDuration)s, fps=\(config.transitionFPS), playTransition=\(playTransition)")
 
-    // Kick off wal on a background thread so it runs in parallel with the
-    // animated overlay rather than waiting for it to finish.
-    DispatchQueue.global(qos: .userInitiated).async {
-        walResult.value = performWalApplication(
+    // Match the desktop app: play the transition overlay first, then apply
+    // wal in the completion handler so the overlay covers the desktop swap.
+    var walResult = false
+
+    CLITransitionController.shared.play(
+        oldURL: oldURL,
+        newURL: sourceURL,
+        type: effect,
+        duration: config.transitionDuration,
+        fps: config.transitionFPS
+    ) {
+        walResult = performWalApplication(
             walPath: walPath,
             dummyFile: dummyFile,
             usedBackend: usedBackend,
@@ -310,31 +300,15 @@ func runWal(
             runPywalfox: config.runPywalfox,
             customScript: config.customScriptPath
         )
-        walSemaphore.signal()
+        CFRunLoopStop(CFRunLoopGetMain())
     }
 
-    let transitionSemaphore = DispatchSemaphore(value: 0)
-    TransitionOverlayController.shared.play(
-        oldURL: oldURL,
-        newURL: sourceURL,
-        type: effect,
-        duration: config.transitionDuration,
-        fps: config.transitionFPS
-    ) {
-        transitionSemaphore.signal()
-    }
-
-    // Wait for the transition to finish (wal is already running/pending).
-    // Hard safety timeout guarantees the CLI never hangs if the overlay
-    // animation fails to signal for any reason.
-    let deadline = Date().addingTimeInterval(config.transitionDuration + 2.0)
-    while transitionSemaphore.wait(timeout: .now() + 0.1) == .timedOut {
-        if Date() > deadline { break }
-        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-    }
-    // Make sure wal has finished too before reporting success.
-    walSemaphore.wait()
-    return walResult.value
+    // Pump the run loop until the transition completes.  Drive it with
+    // CFRunLoopRun() so the connection to the window server is properly
+    // established (unlike manual run(until:) pumping which skips some
+    // CA / window-server initialisation for desktop-level windows).
+    CFRunLoopRun()
+    return walResult
 }
 
 /// The image currently shown on the desktop, used as the "old" frame for the
