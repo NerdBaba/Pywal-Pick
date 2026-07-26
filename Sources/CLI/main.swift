@@ -281,17 +281,23 @@ func runWal(
     let resolvedEffect = effect.resolved
     print("Debug: transitionType=\(effect.rawValue), resolved=\(resolvedEffect.rawValue), duration=\(config.transitionDuration)s, fps=\(config.transitionFPS), playTransition=\(playTransition)")
 
-    // Match the desktop app: play the transition overlay first, then apply
-    // wal in the completion handler so the overlay covers the desktop swap.
-    var walResult = false
+    // Persistent overlay pattern (inspired by WalBridge):
+    // 1. Show overlay windows with OLD wallpaper (covers the desktop)
+    // 2. Run wal behind the overlays (user sees nothing change)
+    // 3. Animate overlays away (revealing the new wallpaper underneath)
+    // This avoids the black-background problem entirely.
+    CLITransitionController.shared.showOverlay(oldURL: oldURL)
 
-    CLITransitionController.shared.play(
-        oldURL: oldURL,
-        newURL: sourceURL,
-        type: effect,
-        duration: config.transitionDuration,
-        fps: config.transitionFPS
-    ) {
+    // Brief pump so the windows render on screen
+    CFRunLoopRunInMode(.defaultMode, 0.05, false)
+
+    // Run wal behind the overlays on a background thread so the main
+    // thread's run loop keeps pumping — Core Animation can composite the
+    // overlay windows while wal executes.
+    var walResult = false
+    let walSemaphore = DispatchSemaphore(value: 0)
+
+    DispatchQueue.global(qos: .userInitiated).async {
         walResult = performWalApplication(
             walPath: walPath,
             dummyFile: dummyFile,
@@ -300,13 +306,25 @@ func runWal(
             runPywalfox: config.runPywalfox,
             customScript: config.customScriptPath
         )
+        walSemaphore.signal()
+    }
+
+    // Keep the main run loop pumping while wal runs so overlay windows
+    // stay composited on screen.
+    while walSemaphore.wait(timeout: .now()) == .timedOut {
+        CFRunLoopRunInMode(.defaultMode, 0.01, false)
+    }
+
+    // Animate overlays away, revealing the new wallpaper
+    CLITransitionController.shared.animateOverlays(
+        type: effect,
+        duration: config.transitionDuration
+    ) {
+        CLITransitionController.shared.closeOverlays()
         CFRunLoopStop(CFRunLoopGetMain())
     }
 
-    // Pump the run loop until the transition completes.  Drive it with
-    // CFRunLoopRun() so the connection to the window server is properly
-    // established (unlike manual run(until:) pumping which skips some
-    // CA / window-server initialisation for desktop-level windows).
+    // Pump the run loop until the animation completes.
     CFRunLoopRun()
     return walResult
 }

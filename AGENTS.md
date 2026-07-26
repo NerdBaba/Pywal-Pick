@@ -201,10 +201,26 @@ Tests verify wal binary execution, not UI behavior.
 - **Accent color**: Extracted from wal colors (index 7)
 - **System reload**: Requires killing WallpaperAgent, Dock, ControlCenter
 
-### Logging
-- **Console**: `print()` statements for debugging
-- **File**: `/tmp/wallswitcherlogs/app.log`
-- **Debug**: Desktop/wallpaper_switcher.log (wallpaper switching process)
+### Transition Overlay Rendering
+
+#### Desktop App (GrowTransitionView in PywalPick target)
+- **CRITICAL**: `NSImageView` is **unreliable** as a subview inside a layer-backed `NSView` (`wantsLayer=true`). It displays black instead of the image — a known AppKit rendering bug.
+- **DO NOT use NSImageView** in `GrowTransitionView`. Instead, use `CALayer` sublayers with `contents` and `contentsGravity = .resizeAspectFill`.
+- **Pattern that works**: `GrowTransitionView` uses two `CALayer` sublayers (`oldImageLayer` + `newImageLayer`), with a `CAShapeLayer` mask on the foreground layer only.
+- `GrowTransitionView` is in `TransitionOverlayController.swift` in the PywalPick target.
+- `DesktopTransitionWindow` must use `isOpaque=true, backgroundColor=.black` (not .clear).
+- `NSImage(contentsOf:)` can return `nil` silently, especially when `desktopImageURL` returns a **directory URL** (known macOS bug with slideshow/dynamic wallpapers). Add logging if old image isn't appearing.
+
+#### CLI (CLITransitionController.swift — persistent overlay pattern)
+- **Pattern** (inspired by WalBridge + Mural): create transparent overlay windows at `desktopWindow+1` showing the OLD wallpaper, run wal behind them, then animate overlays away to reveal the new desktop.
+- This eliminates the black-background problem because the overlay always shows valid wallpaper content.
+- **Key files**: `Sources/CLI/CLITransitionController.swift` (controller + `OverlayWindow`), `Sources/CLI/main.swift` (runWal)
+- **CAUTION**: `performWalApplication` MUST run on a background thread (`DispatchQueue.global`) while the main run loop keeps pumping (`CFRunLoopRunInMode`). If wal blocks the main thread, Core Animation cannot composite the overlay windows — they never appear on screen.
+- **CAUTION**: `NSImage(contentsOf:)` can silently return `nil` for dynamic wallpapers/slideshow URLs. Always guard and log.
+- **Window level**: `desktopWindow + 1` (above desktop wallpaper, below icons).
+- **Effects**: fade (alpha=0), wipe (CALayer mask slide), grow (inverted CAShapeLayer evenOdd mask — circle expands from center revealing new desktop).
+- **OverlayWindow**: `isOpaque=false, backgroundColor=.clear, ignoresMouseEvents=true, canBecomeKey=false`.
+- Old `CLITransitionViews.swift` (CLIGrowView, CLIFadeView, CLIWipeView) has been deleted — replaced by this approach.
 
 ## Code Style
 
