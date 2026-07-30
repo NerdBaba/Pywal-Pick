@@ -15,17 +15,17 @@ struct PywalPickApp: App {
         WindowGroup("Pywal Pick", id: "main") {
             WallpaperSwitcherView()
                 .environmentObject(settingsManager)
-                .background(.ultraThinMaterial)
+                .background(.regularMaterial)
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 1000, height: 700)
 
         WindowGroup("Settings", id: "settings") {
             SettingsView(settingsManager: settingsManager)
-                .frame(minWidth: 600, minHeight: 500)
-                .background(.ultraThinMaterial)
+                .frame(minWidth: 720, minHeight: 520)
         }
         .windowResizability(.contentSize)
+        .defaultSize(width: 780, height: 560)
     }
     
     private func registerFonts() {

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 public struct SettingsView: View {
@@ -6,21 +7,25 @@ public struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showPicker = false
     @State private var activePicker: PickerType = .folder
-    @State private var selectedTab = "paths"
+    @State private var selectedTab: Tab = .paths
 
     // Deferred path editing: local copies that only apply when user taps Apply
     @State private var pendingWallpaperPath = ""
     @State private var pendingDummyFile = ""
     @State private var pendingWalBinary = ""
     @State private var pendingCustomScript = ""
-    @State private var pathStatus: PathStatus?
+    @State private var pathStatuses: [PickerType: PathStatus] = [:]
 
     // CLI state
     @State private var cliInstalled = false
     @State private var cliInstallPath = ""
     @State private var cliInstallMessage: String?
 
-    private enum PickerType {
+    // Cache maintenance
+    @State private var isRebuildingCache = false
+    @State private var cacheRebuildMessage: String?
+
+    private enum PickerType: Hashable {
         case folder, dummyFile, walBinary, script
     }
 
@@ -34,45 +39,29 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            // Tab switcher bar
-            HStack(spacing: 0) {
-                ForEach(Tab.allCases) { tab in
-                    Button {
-                        selectedTab = tab.id
-                    } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: tab.icon)
-                                .font(.title3)
-                            Text(tab.title)
-                                .font(.caption)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(selectedTab == tab.id ? Color.accentColor.opacity(0.15) : Color.clear)
-                        .foregroundColor(selectedTab == tab.id ? .accentColor : .secondary)
+        NavigationSplitView {
+            List(selection: $selectedTab) {
+                Section("Library") {
+                    ForEach(Tab.libraryTabs) { tab in
+                        sidebarRow(for: tab)
                     }
-                    .buttonStyle(.plain)
+                }
+
+                Section("System") {
+                    ForEach(Tab.systemTabs) { tab in
+                        sidebarRow(for: tab)
+                    }
                 }
             }
-            .padding(.horizontal, 12)
-
-            Divider()
-
-            // Tab content
-            Group {
-                switch selectedTab {
-                case "paths": pathsTab
-                case "appearance": appearanceTab
-                case "integrations": integrationsTab
-                case "cli": cliTab
-                default: pathsTab
-                }
-            }
-            .padding(.horizontal, 20)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+        } detail: {
+            detailContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(.background)
         }
-        .padding()
-        .frame(minWidth: 620, minHeight: 480)
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 720, minHeight: 520)
         .onAppear {
             loadPendingPaths()
             cliInstallPath = defaultCLIPath
@@ -94,17 +83,54 @@ public struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private func sidebarRow(for tab: Tab) -> some View {
+        Label(tab.title, systemImage: tab.icon)
+            .symbolRenderingMode(.hierarchical)
+            .tag(tab)
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Detail header — docs-style title bar
+            HStack(spacing: UIStyle.spaceSM) {
+                Image(systemName: selectedTab.icon)
+                    .font(.title2.weight(.semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.secondary)
+                Text(selectedTab.title)
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, UIStyle.spaceXL)
+            .padding(.vertical, UIStyle.spaceLG)
+
+            Divider().opacity(0.45)
+
+            Group {
+                switch selectedTab {
+                case .paths: pathsTab
+                case .appearance: appearanceTab
+                case .integrations: integrationsTab
+                case .cli: cliTab
+                }
+            }
+            .padding(.horizontal, UIStyle.spaceXL)
+            .padding(.bottom, UIStyle.spaceMD)
+        }
+    }
+
     // MARK: - Tabs
 
     private var pathsTab: some View {
         ScrollView {
-            VStack(spacing: 24) {
+            VStack(spacing: UIStyle.spaceLG) {
                 pathSection(
                     title: "Wallpaper Folder",
                     icon: "folder.fill",
                     path: $pendingWallpaperPath,
                     pickerType: .folder,
-                    allowedTypes: [.folder],
                     apply: applyWallpaperPath
                 )
 
@@ -113,7 +139,6 @@ public struct SettingsView: View {
                     icon: "doc.fill",
                     path: $pendingDummyFile,
                     pickerType: .dummyFile,
-                    allowedTypes: [.image, .jpeg, .png],
                     apply: applyDummyFile
                 )
 
@@ -122,61 +147,64 @@ public struct SettingsView: View {
                     icon: "terminal.fill",
                     path: $pendingWalBinary,
                     pickerType: .walBinary,
-                    allowedTypes: [.unixExecutable, .application],
-                    apply: applyWalBinary
+                    apply: applyWalBinary,
+                    showsFindWal: true
                 )
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, UIStyle.spaceMD)
         }
     }
 
     private var appearanceTab: some View {
         ScrollView {
-            VStack(spacing: 24) {
-                Group {
-                    Text("Default Sorting")
-                        .font(.headline)
+            VStack(spacing: UIStyle.spaceLG) {
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Default Sorting", systemImage: "arrow.up.arrow.down")
+                        .font(UIStyle.sectionTitle)
 
-                    HStack(spacing: 16) {
+                    HStack(spacing: UIStyle.spaceMD) {
                         Picker("Sort by", selection: $settingsManager.config.defaultSortOption) {
                             ForEach(SortOption.allCases, id: \.self) { option in
                                 Text(option.rawValue).tag(option)
                             }
                         }
                         .pickerStyle(.segmented)
+                        .labelsHidden()
 
-                        Button(action: {
+                        Button {
                             settingsManager.config.defaultSortOrder.toggle()
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: settingsManager.config.defaultSortOrder ? "arrow.up" : "arrow.down")
-                                Text(settingsManager.config.defaultSortOrder ? "A-Z" : "Z-A")
-                            }
+                        } label: {
+                            Label(
+                                settingsManager.config.defaultSortOrder ? "A–Z" : "Z–A",
+                                systemImage: settingsManager.config.defaultSortOrder ? "arrow.up" : "arrow.down"
+                            )
                         }
                         .buttonStyle(.bordered)
+                        .controlSize(.regular)
                     }
                 }
+                .uiSettingsSection()
 
-                Divider()
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Grid Layout", systemImage: "square.grid.3x3")
+                        .font(UIStyle.sectionTitle)
 
-                Group {
-                    Text("Grid Layout")
-                        .font(.headline)
-
-                    HStack {
-                        Text("Columns:")
+                    LabeledContent("Columns") {
                         Stepper(value: $settingsManager.config.gridColumns, in: 2...8) {
                             Text("\(settingsManager.config.gridColumns)")
-                                .font(.system(.body, design: .monospaced))
+                                .font(UIStyle.mono)
+                                .frame(minWidth: 24, alignment: .trailing)
                         }
                     }
+
+                    Toggle("Show wallpaper names", isOn: $settingsManager.config.showWallpaperNames)
+                        .toggleStyle(.switch)
                 }
+                .uiSettingsSection()
 
-                Divider()
-
-                Group {
-                    Text("View Mode")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("View Mode", systemImage: "rectangle.split.3x1")
+                        .font(UIStyle.sectionTitle)
 
                     Picker("Default view", selection: $settingsManager.config.viewMode) {
                         ForEach(ViewMode.allCases) { mode in
@@ -184,13 +212,13 @@ public struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
+                .uiSettingsSection()
 
-                Divider()
-
-                Group {
-                    Text("Wallpaper Transition")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Wallpaper Transition", systemImage: "rectangle.on.rectangle.angled")
+                        .font(UIStyle.sectionTitle)
 
                     Picker("Transition", selection: $settingsManager.config.transitionType) {
                         ForEach(TransitionType.allCases) { type in
@@ -198,144 +226,198 @@ public struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
 
-                    HStack {
-                        Text("Duration:")
-                        Stepper(value: $settingsManager.config.transitionDuration, in: 0.2...3.0, step: 0.1) {
+                    LabeledContent("Duration") {
+                        Stepper(
+                            value: $settingsManager.config.transitionDuration,
+                            in: 0.2...3.0,
+                            step: 0.1
+                        ) {
                             Text(String(format: "%.1f s", settingsManager.config.transitionDuration))
-                                .font(.system(.body, design: .monospaced))
+                                .font(UIStyle.mono)
+                                .frame(minWidth: 48, alignment: .trailing)
                         }
                     }
 
-                    HStack {
-                        Text("Frame rate:")
-                        Stepper(value: $settingsManager.config.transitionFPS, in: 10...120, step: 5) {
+                    LabeledContent("Frame rate") {
+                        Stepper(
+                            value: $settingsManager.config.transitionFPS,
+                            in: 10...120,
+                            step: 5
+                        ) {
                             Text("\(settingsManager.config.transitionFPS) fps")
-                                .font(.system(.body, design: .monospaced))
+                                .font(UIStyle.mono)
+                                .frame(minWidth: 64, alignment: .trailing)
                         }
                     }
 
                     Text("Plays a brief animation above the desktop when a wallpaper is applied.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
                 }
+                .uiSettingsSection()
+
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Cache", systemImage: "internaldrive")
+                        .font(UIStyle.sectionTitle)
+
+                    Text("Clears thumbnail, preview, and color-filter caches, then regenerates them from your wallpaper folder.")
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: UIStyle.spaceMD) {
+                        Button {
+                            rebuildWallpaperCache()
+                        } label: {
+                            if isRebuildingCache {
+                                Label("Rebuilding…", systemImage: "arrow.triangle.2.circlepath")
+                            } else {
+                                Label("Rebuild Wallpaper Cache", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isRebuildingCache || settingsManager.config.wallpaperFolderPath.isEmpty)
+                        .help(
+                            settingsManager.config.wallpaperFolderPath.isEmpty
+                                ? "Set a wallpaper folder first"
+                                : "Clear and regenerate wallpaper caches"
+                        )
+
+                        if isRebuildingCache {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    if let cacheRebuildMessage {
+                        Label(
+                            cacheRebuildMessage,
+                            systemImage: cacheRebuildMessage.hasPrefix("Failed")
+                                ? "exclamationmark.triangle.fill"
+                                : "checkmark.circle.fill"
+                        )
+                        .font(UIStyle.caption)
+                        .foregroundStyle(
+                            cacheRebuildMessage.hasPrefix("Failed") ? .red : .green
+                        )
+                    }
+                }
+                .uiSettingsSection()
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, UIStyle.spaceMD)
         }
     }
 
     private var integrationsTab: some View {
         ScrollView {
-            VStack(spacing: 24) {
-                Group {
-                    Text("Wal Backend")
-                        .font(.headline)
+            VStack(spacing: UIStyle.spaceLG) {
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Wal Backend", systemImage: "paintbrush.pointed")
+                        .font(UIStyle.sectionTitle)
 
-                    Picker("Color extraction backend:", selection: $settingsManager.config.selectedBackend) {
+                    Picker("Color extraction backend", selection: $settingsManager.config.selectedBackend) {
                         ForEach(WalBackend.allCases) { backend in
                             Text(backend.displayName).tag(backend)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
 
                     Text("Determines how wal extracts colors from wallpapers")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
                 }
+                .uiSettingsSection()
 
-                Divider()
-
-                Group {
-                    Text("Browser Integration")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Browser Integration", systemImage: "safari")
+                        .font(UIStyle.sectionTitle)
 
                     Toggle("Run pywalfox update after wal", isOn: $settingsManager.config.runPywalfox)
-                    Text("Updates Firefox theme colors automatically")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                        .toggleStyle(.switch)
 
-                Divider()
+                    Text("Updates Firefox theme colors automatically")
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .uiSettingsSection()
 
                 pathSection(
                     title: "Custom Script",
-                    icon: "script",
+                    icon: "applescript",
                     path: $pendingCustomScript,
                     pickerType: .script,
-                    allowedTypes: [.shellScript, .unixExecutable],
                     apply: applyCustomScript
                 )
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, UIStyle.spaceMD)
         }
     }
 
     private var cliTab: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                HStack {
-                    Image(systemName: "terminal")
-                        .font(.title2)
-                    Text("wallpick CLI Tool")
-                        .font(.headline)
-                }
+            VStack(alignment: .leading, spacing: UIStyle.spaceLG) {
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("wallpick CLI Tool", systemImage: "terminal")
+                        .font(UIStyle.sectionTitle)
 
-                Text("Install the command-line tool to control wallpapers from your terminal.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    Text("Install the command-line tool to control wallpapers from your terminal.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
 
-                HStack {
-                    Text("Install path:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    TextField("Install path", text: $cliInstallPath)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-                }
-
-                HStack(spacing: 12) {
-                    Button(action: installCLI) {
-                        Label(cliInstalled ? "Reinstall" : "Install", systemImage: cliInstalled ? "checkmark.circle.fill" : "square.and.arrow.down")
+                    LabeledContent("Install path") {
+                        TextField("Install path", text: $cliInstallPath)
+                            .textFieldStyle(.roundedBorder)
+                            .font(UIStyle.mono)
+                            .frame(maxWidth: 360)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(cliInstalled ? .green : .blue)
-                    .disabled(cliInstallPath.isEmpty)
 
-                    Button(action: uninstallCLI) {
-                        Label("Uninstall", systemImage: "trash")
+                    HStack(spacing: UIStyle.spaceMD) {
+                        Button(action: installCLI) {
+                            Label(
+                                cliInstalled ? "Reinstall" : "Install",
+                                systemImage: cliInstalled ? "checkmark.circle.fill" : "square.and.arrow.down"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(cliInstalled ? .green : .accentColor)
+                        .disabled(cliInstallPath.isEmpty)
+
+                        Button(action: uninstallCLI) {
+                            Label("Uninstall", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                        .disabled(!cliInstalled)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(.red)
-                    .disabled(!cliInstalled)
 
                     if let message = cliInstallMessage {
                         Text(message)
-                            .font(.caption)
-                            .foregroundColor(message.hasPrefix("Error") ? .red : .green)
+                            .font(UIStyle.caption)
+                            .foregroundStyle(message.hasPrefix("Error") ? .red : .green)
                     }
                 }
+                .uiSettingsSection()
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: UIStyle.spaceSM) {
                     Text("Usage")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                        .font(UIStyle.sectionTitle)
 
-                    Text("wallpick random          - Set a random wallpaper")
-                        .font(.system(.caption, design: .monospaced))
-                    Text("wallpick set <path>        - Set wallpaper by path")
-                        .font(.system(.caption, design: .monospaced))
-                    Text("wallpick update            - Re-run wal on current wallpaper")
-                        .font(.system(.caption, design: .monospaced))
-                    Text("wallpick list [query]      - List wallpapers")
-                        .font(.system(.caption, design: .monospaced))
-                    Text("wallpick current           - Show current wallpaper")
-                        .font(.system(.caption, design: .monospaced))
+                    Group {
+                        Text("wallpick random          - Set a random wallpaper")
+                        Text("wallpick set <path>      - Set wallpaper by path")
+                        Text("wallpick update          - Re-run wal on current wallpaper")
+                        Text("wallpick list [query]    - List wallpapers")
+                        Text("wallpick current         - Show current wallpaper")
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
                 }
-                .padding(.top, 4)
+                .uiSettingsSection()
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, UIStyle.spaceMD)
         }
     }
 
@@ -346,50 +428,97 @@ public struct SettingsView: View {
         icon: String,
         path: Binding<String>,
         pickerType: PickerType,
-        allowedTypes: [UTType],
-        apply: @escaping () -> Void
+        apply: @escaping () -> Void,
+        showsFindWal: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(.secondary)
-                Text(title)
-                    .font(.headline)
-            }
+        let live = liveValidation(for: path.wrappedValue, type: pickerType)
+        let applyStatus = pathStatuses[pickerType]
 
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+            Label(title, systemImage: icon)
+                .font(UIStyle.sectionTitle)
+
+            HStack(spacing: UIStyle.spaceSM) {
                 TextField("Path", text: path)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
+                    .font(UIStyle.mono)
+                    .onChange(of: path.wrappedValue) { _, _ in
+                        // Clear sticky apply message once the user edits again.
+                        pathStatuses[pickerType] = nil
+                    }
 
-                Button("Browse") {
+                Button {
                     activePicker = pickerType
                     showPicker = true
-                    // Update pending path after picker returns
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        pendingWallpaperPath = pendingWallpaperPath
-                    }
+                } label: {
+                    Label("Browse", systemImage: "folder")
                 }
                 .buttonStyle(.bordered)
+
+                Button {
+                    revealInFinder(path.wrappedValue)
+                } label: {
+                    Label("Reveal", systemImage: "arrow.right.circle.fill")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!canReveal(path.wrappedValue))
+                .help("Reveal in Finder")
             }
 
-            HStack(spacing: 8) {
-                Button("Apply") {
-                    apply()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.blue)
+            HStack(spacing: UIStyle.spaceSM) {
+                Button("Apply", action: apply)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(live?.isError == true)
 
-                if let status = pathStatus {
-                    Text(status.message)
-                        .font(.caption)
-                        .foregroundColor(status.isError ? .red : .green)
+                if showsFindWal {
+                    Button {
+                        findWalBinary()
+                    } label: {
+                        Label("Find wal", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Search common install locations for wal")
+                }
+
+                if let applyStatus {
+                    Label(
+                        applyStatus.message,
+                        systemImage: applyStatus.isError
+                            ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+                    )
+                    .font(UIStyle.caption)
+                    .foregroundStyle(applyStatus.isError ? .red : .green)
+                    .labelStyle(.titleAndIcon)
+                } else if let live {
+                    Label(live.message, systemImage: live.symbol)
+                        .font(UIStyle.caption)
+                        .foregroundStyle(live.isError ? .orange : .secondary)
+                        .labelStyle(.titleAndIcon)
                 }
             }
         }
+        .uiSettingsSection()
     }
 
     // MARK: - Helpers
+
+    private func rebuildWallpaperCache() {
+        guard !settingsManager.config.wallpaperFolderPath.isEmpty else {
+            cacheRebuildMessage = "Failed: set a wallpaper folder first"
+            return
+        }
+
+        isRebuildingCache = true
+        cacheRebuildMessage = nil
+
+        Task.detached(priority: .userInitiated) {
+            CacheMaintenance.rebuildAndReload()
+            await MainActor.run {
+                isRebuildingCache = false
+                cacheRebuildMessage = "Cache cleared — regenerating thumbnails and colors"
+            }
+        }
+    }
 
     private func loadPendingPaths() {
         pendingWallpaperPath = settingsManager.config.wallpaperFolderPath
@@ -409,6 +538,7 @@ public struct SettingsView: View {
         case .script:
             pendingCustomScript = path
         }
+        pathStatuses[type] = nil
     }
 
     private func filePickerTypes(for type: PickerType) -> [UTType] {
@@ -424,44 +554,179 @@ public struct SettingsView: View {
         }
     }
 
+    private func setStatus(_ type: PickerType, message: String, isError: Bool) {
+        pathStatuses[type] = PathStatus(message: message, isError: isError)
+    }
+
     private func applyWallpaperPath() {
-        guard !pendingWallpaperPath.isEmpty else {
-            pathStatus = PathStatus(message: "Path cannot be empty", isError: true)
+        let path = pendingWallpaperPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            setStatus(.folder, message: "Path cannot be empty", isError: true)
             return
         }
-        if !FileManager.default.fileExists(atPath: pendingWallpaperPath) {
-            pathStatus = PathStatus(message: "Path does not exist", isError: true)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
+            setStatus(.folder, message: "Folder not found", isError: true)
             return
         }
-        settingsManager.updateWallpaperFolderPath(pendingWallpaperPath)
-        pathStatus = PathStatus(message: "Applied wallpapers will reload", isError: false)
+        pendingWallpaperPath = path
+        settingsManager.updateWallpaperFolderPath(path)
+        setStatus(.folder, message: "Applied — wallpapers will reload", isError: false)
     }
 
     private func applyDummyFile() {
-        guard !pendingDummyFile.isEmpty else {
-            pathStatus = PathStatus(message: "Path cannot be empty", isError: true)
+        let path = pendingDummyFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            setStatus(.dummyFile, message: "Path cannot be empty", isError: true)
             return
         }
-        settingsManager.updateDummyWallpaperFile(pendingDummyFile)
-        pathStatus = PathStatus(message: "Applied", isError: false)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue else {
+            setStatus(.dummyFile, message: "Image file not found", isError: true)
+            return
+        }
+        pendingDummyFile = path
+        settingsManager.updateDummyWallpaperFile(path)
+        setStatus(.dummyFile, message: "Applied", isError: false)
     }
 
     private func applyWalBinary() {
-        guard !pendingWalBinary.isEmpty else {
-            pathStatus = PathStatus(message: "Path cannot be empty", isError: true)
+        let path = pendingWalBinary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            setStatus(.walBinary, message: "Path cannot be empty", isError: true)
             return
         }
-        if !FileManager.default.fileExists(atPath: pendingWalBinary) {
-            pathStatus = PathStatus(message: "Binary not found at this path", isError: true)
+        guard FileManager.default.isExecutableFile(atPath: path) else {
+            setStatus(.walBinary, message: "Executable not found at this path", isError: true)
             return
         }
-        settingsManager.updateWalBinaryPath(pendingWalBinary)
-        pathStatus = PathStatus(message: "Applied", isError: false)
+        pendingWalBinary = path
+        settingsManager.updateWalBinaryPath(path)
+        setStatus(.walBinary, message: "Applied", isError: false)
     }
 
     private func applyCustomScript() {
-        settingsManager.config.customScriptPath = pendingCustomScript
-        pathStatus = PathStatus(message: "Applied", isError: false)
+        let path = pendingCustomScript.trimmingCharacters(in: .whitespacesAndNewlines)
+        if path.isEmpty {
+            settingsManager.config.customScriptPath = ""
+            setStatus(.script, message: "Cleared", isError: false)
+            return
+        }
+        guard FileManager.default.fileExists(atPath: path) else {
+            setStatus(.script, message: "Script not found", isError: true)
+            return
+        }
+        pendingCustomScript = path
+        settingsManager.config.customScriptPath = path
+        setStatus(.script, message: "Applied", isError: false)
+    }
+
+    // MARK: - Path validation / Finder / wal detect
+
+    private struct LiveValidation: Equatable {
+        let message: String
+        let isError: Bool
+        let symbol: String
+    }
+
+    private func liveValidation(for path: String, type: PickerType) -> LiveValidation? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            if type == .script {
+                return LiveValidation(message: "Optional", isError: false, symbol: "info.circle")
+            }
+            return LiveValidation(message: "Enter a path", isError: true, symbol: "exclamationmark.circle")
+        }
+
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: trimmed, isDirectory: &isDir)
+
+        switch type {
+        case .folder:
+            if exists && isDir.boolValue {
+                return LiveValidation(message: "Valid folder", isError: false, symbol: "checkmark.circle")
+            }
+            return LiveValidation(message: "Not a folder", isError: true, symbol: "exclamationmark.triangle")
+        case .dummyFile:
+            if exists && !isDir.boolValue {
+                return LiveValidation(message: "File found", isError: false, symbol: "checkmark.circle")
+            }
+            return LiveValidation(message: "File not found", isError: true, symbol: "exclamationmark.triangle")
+        case .walBinary:
+            if FileManager.default.isExecutableFile(atPath: trimmed) {
+                return LiveValidation(message: "Executable found", isError: false, symbol: "checkmark.circle")
+            }
+            if exists {
+                return LiveValidation(message: "Not executable", isError: true, symbol: "exclamationmark.triangle")
+            }
+            return LiveValidation(message: "Binary not found", isError: true, symbol: "exclamationmark.triangle")
+        case .script:
+            if exists {
+                return LiveValidation(message: "Script found", isError: false, symbol: "checkmark.circle")
+            }
+            return LiveValidation(message: "Path not found", isError: true, symbol: "exclamationmark.triangle")
+        }
+    }
+
+    private func canReveal(_ path: String) -> Bool {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && FileManager.default.fileExists(atPath: trimmed)
+    }
+
+    private func revealInFinder(_ path: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let url = URL(fileURLWithPath: trimmed)
+        if FileManager.default.fileExists(atPath: trimmed) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
+        }
+    }
+
+    private func findWalBinary() {
+        let home = NSHomeDirectory()
+        let candidates = [
+            "\(home)/.local/bin/wal",
+            "/opt/homebrew/bin/wal",
+            "/usr/local/bin/wal",
+            "/usr/bin/wal",
+        ]
+
+        if let found = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            pendingWalBinary = found
+            pathStatuses[.walBinary] = nil
+            setStatus(.walBinary, message: "Found at \(found)", isError: false)
+            return
+        }
+
+        // Fall back to `which wal` using a login-like PATH.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        task.arguments = ["-lc", "which wal"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if task.terminationStatus == 0,
+                !output.isEmpty,
+                FileManager.default.isExecutableFile(atPath: output)
+            {
+                pendingWalBinary = output
+                pathStatuses[.walBinary] = nil
+                setStatus(.walBinary, message: "Found at \(output)", isError: false)
+                return
+            }
+        } catch {
+            // fall through
+        }
+
+        setStatus(.walBinary, message: "Could not find wal — install pywal or set path manually", isError: true)
     }
 
     // MARK: - CLI Installation
@@ -533,6 +798,10 @@ extension SettingsView {
         case cli
 
         var id: String { rawValue }
+
+        static let libraryTabs: [Tab] = [.paths, .appearance]
+        static let systemTabs: [Tab] = [.integrations, .cli]
+
         var title: String {
             switch self {
             case .paths: return "Paths"
@@ -541,6 +810,7 @@ extension SettingsView {
             case .cli: return "CLI"
             }
         }
+
         var icon: String {
             switch self {
             case .paths: return "folder.badge.gearshape"

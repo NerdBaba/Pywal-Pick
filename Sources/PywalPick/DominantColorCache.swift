@@ -19,22 +19,35 @@ class DominantColorCache: @unchecked Sendable {
         loadFromDiskSync()
     }
 
+    /// Returns a previously cached color without decoding the image.
+    func cachedColor(for url: URL) -> NSColor? {
+        let key = url.path
+        var cached: NSColor?
+        queue.sync { cached = cache[key] }
+        return cached
+    }
+
     /// Returns the dominant color for an image at the given URL.
     /// Computes on first access, caches forever, persists to disk. Thread-safe.
     func dominantColor(for url: URL) -> NSColor? {
-        let key = url.path
-
-        var cached: NSColor?
-        queue.sync { cached = cache[key] }
-        if let cached { return cached }
+        if let cached = cachedColor(for: url) { return cached }
 
         guard let color = extractDominantColor(from: url) else { return nil }
 
         queue.async(flags: .barrier) {
-            self.cache[key] = color
+            self.cache[url.path] = color
             self.saveToDisk()
         }
         return color
+    }
+
+    /// Async variant that never blocks the caller with ImageIO/CI work.
+    func dominantColorAsync(for url: URL) async -> NSColor? {
+        if let cached = cachedColor(for: url) { return cached }
+
+        return await Task.detached(priority: .utility) { [url] in
+            DominantColorCache.shared.dominantColor(for: url)
+        }.value
     }
 
     /// Remove cache entries for URLs that no longer exist.
@@ -44,6 +57,14 @@ class DominantColorCache: @unchecked Sendable {
                 validURLs.contains(URL(fileURLWithPath: key))
             }
             self.saveToDisk()
+        }
+    }
+
+    /// Clears in-memory and on-disk dominant color cache.
+    func clearAll() {
+        queue.sync(flags: .barrier) {
+            cache.removeAll()
+            try? FileManager.default.removeItem(at: cacheURL)
         }
     }
 

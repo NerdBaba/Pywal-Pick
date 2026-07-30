@@ -113,6 +113,7 @@ public struct AppConfig: Codable, Sendable {
     public var transitionType: TransitionType
     public var transitionDuration: Double
     public var transitionFPS: Int
+    public var showWallpaperNames: Bool
 
     public static let `default` = AppConfig(
         wallpaperFolderPath: "",
@@ -128,10 +129,65 @@ public struct AppConfig: Codable, Sendable {
         lastSelectedWallpaperPath: "",
         transitionType: .fade,
         transitionDuration: 1.0,
-        transitionFPS: 60
+        transitionFPS: 60,
+        showWallpaperNames: true
     )
 
     private static let configURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/PywalPick/config.json")
+
+    public init(
+        wallpaperFolderPath: String,
+        dummyWallpaperFile: String,
+        walBinaryPath: String,
+        defaultSortOption: SortOption,
+        defaultSortOrder: Bool,
+        gridColumns: Int,
+        runPywalfox: Bool,
+        customScriptPath: String,
+        viewMode: ViewMode,
+        selectedBackend: WalBackend,
+        lastSelectedWallpaperPath: String,
+        transitionType: TransitionType,
+        transitionDuration: Double,
+        transitionFPS: Int,
+        showWallpaperNames: Bool
+    ) {
+        self.wallpaperFolderPath = wallpaperFolderPath
+        self.dummyWallpaperFile = dummyWallpaperFile
+        self.walBinaryPath = walBinaryPath
+        self.defaultSortOption = defaultSortOption
+        self.defaultSortOrder = defaultSortOrder
+        self.gridColumns = gridColumns
+        self.runPywalfox = runPywalfox
+        self.customScriptPath = customScriptPath
+        self.viewMode = viewMode
+        self.selectedBackend = selectedBackend
+        self.lastSelectedWallpaperPath = lastSelectedWallpaperPath
+        self.transitionType = transitionType
+        self.transitionDuration = transitionDuration
+        self.transitionFPS = transitionFPS
+        self.showWallpaperNames = showWallpaperNames
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Self.default
+        wallpaperFolderPath = try c.decodeIfPresent(String.self, forKey: .wallpaperFolderPath) ?? d.wallpaperFolderPath
+        dummyWallpaperFile = try c.decodeIfPresent(String.self, forKey: .dummyWallpaperFile) ?? d.dummyWallpaperFile
+        walBinaryPath = try c.decodeIfPresent(String.self, forKey: .walBinaryPath) ?? d.walBinaryPath
+        defaultSortOption = try c.decodeIfPresent(SortOption.self, forKey: .defaultSortOption) ?? d.defaultSortOption
+        defaultSortOrder = try c.decodeIfPresent(Bool.self, forKey: .defaultSortOrder) ?? d.defaultSortOrder
+        gridColumns = try c.decodeIfPresent(Int.self, forKey: .gridColumns) ?? d.gridColumns
+        runPywalfox = try c.decodeIfPresent(Bool.self, forKey: .runPywalfox) ?? d.runPywalfox
+        customScriptPath = try c.decodeIfPresent(String.self, forKey: .customScriptPath) ?? d.customScriptPath
+        viewMode = try c.decodeIfPresent(ViewMode.self, forKey: .viewMode) ?? d.viewMode
+        selectedBackend = try c.decodeIfPresent(WalBackend.self, forKey: .selectedBackend) ?? d.selectedBackend
+        lastSelectedWallpaperPath = try c.decodeIfPresent(String.self, forKey: .lastSelectedWallpaperPath) ?? d.lastSelectedWallpaperPath
+        transitionType = try c.decodeIfPresent(TransitionType.self, forKey: .transitionType) ?? d.transitionType
+        transitionDuration = try c.decodeIfPresent(Double.self, forKey: .transitionDuration) ?? d.transitionDuration
+        transitionFPS = try c.decodeIfPresent(Int.self, forKey: .transitionFPS) ?? d.transitionFPS
+        showWallpaperNames = try c.decodeIfPresent(Bool.self, forKey: .showWallpaperNames) ?? true
+    }
 
     public static func load() -> AppConfig {
         guard let data = try? Data(contentsOf: configURL),

@@ -16,34 +16,38 @@ struct RandomOverlayView: View {
             // Blur/translucency backdrop (avoid solid/dark blocks).
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .opacity(0.85)
+                .opacity(0.9)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture { isShowing = false }
                 .transition(.opacity)
 
             // Centered popover container
-            VStack(spacing: 24) {
+            VStack(spacing: UIStyle.spaceXXL) {
                 // Header
                 HStack {
-                    Text("Random Wallpaper")
-                        .font(.custom("Nunito Sans ExtraBold", size: 24))
-                        .foregroundColor(.primary)
+                    Label("Random Wallpaper", systemImage: "shuffle")
+                        .font(.custom("Nunito Sans ExtraBold", size: 22))
+                        .foregroundStyle(.primary)
+                        .labelStyle(.titleAndIcon)
+                        .symbolRenderingMode(.hierarchical)
 
                     Spacer()
 
-                    Button(action: {
+                    Button {
                         isShowing = false
-                    }) {
+                    } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.title2)
-                            .foregroundColor(.primary.opacity(0.8))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
                     .help("Close")
+                    .keyboardShortcut(.cancelAction)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
+                .padding(.horizontal, UIStyle.spaceXXL)
+                .padding(.top, UIStyle.spaceLG)
 
                 // Preview area
                 ZStack {
@@ -52,78 +56,80 @@ struct RandomOverlayView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: 500, maxHeight: 300)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .clipShape(RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous))
                             .id(previewID)
                             .transition(.asymmetric(
-                                insertion: .scale(scale: 0.95).combined(with: .opacity),
+                                insertion: .scale(scale: 0.96).combined(with: .opacity),
                                 removal: .opacity
                             ))
                     } else {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 80))
-                            .foregroundColor(.primary.opacity(0.5))
+                        ContentUnavailableView {
+                            Label("Loading preview", systemImage: "photo.on.rectangle.angled")
+                        }
+                        .frame(maxWidth: 500, maxHeight: 300)
                     }
                 }
                 .frame(maxWidth: 500, maxHeight: 300)
                 .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.gray.opacity(0.3))
+                    RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous)
+                        .fill(.quaternary.opacity(0.35))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous)
+                        .strokeBorder(.primary.opacity(0.08), lineWidth: UIStyle.hairline)
                 )
 
                 // Wallpaper info
                 if let wallpaper = selectedWallpaper {
-                    VStack(spacing: 8) {
+                    VStack(spacing: UIStyle.spaceSM) {
                         Text(wallpaper.name)
                             .font(.headline)
-                            .foregroundColor(.primary)
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
                             .truncationMode(.middle)
 
-                        HStack(spacing: 16) {
+                        HStack(spacing: UIStyle.spaceLG) {
                             Label(
-                                "Size: " + formattedFileSize(wallpaper.fileSize), systemImage: "doc"
+                                formattedFileSize(wallpaper.fileSize),
+                                systemImage: "doc"
                             )
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .font(UIStyle.caption)
+                            .foregroundStyle(.secondary)
 
                             Label(formattedDate(wallpaper.dateModified), systemImage: "calendar")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .font(UIStyle.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
 
                 // Action buttons
-                HStack(spacing: 16) {
-                    Button(action: {
-                        // Respin - get another random wallpaper
+                HStack(spacing: UIStyle.spaceMD) {
+                    Button {
                         pickRandomWallpaper()
-                    }) {
+                    } label: {
                         Label("Respin", systemImage: "arrow.clockwise")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .tint(.orange)
                     .controlSize(.large)
 
-                    Button(action: {
-                        // Set as wallpaper. Parent `setWallpaper` also focuses
-                        // the browser selection on this item (grid/carousel).
+                    Button {
                         if let wallpaper = selectedWallpaper {
                             setWallpaper(wallpaper)
                             isShowing = false
                         }
-                    }) {
-                        Label("Set Wallpaper", systemImage: "checkmark.circle")
+                    } label: {
+                        Label("Set Wallpaper", systemImage: "checkmark.circle.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.green)
                     .controlSize(.large)
+                    .disabled(selectedWallpaper == nil)
 
-                    Button(action: {
+                    Button {
                         showingDeleteAlert = true
-                    }) {
+                    } label: {
                         Label("Delete", systemImage: "trash")
                             .frame(maxWidth: .infinity)
                     }
@@ -140,18 +146,20 @@ struct RandomOverlayView: View {
                         Text("Are you sure you want to delete \"\(wallpaper.name)\"? This action cannot be undone.")
                     }
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, UIStyle.spaceXXL)
             }
-            .padding(.vertical, 24)
+            .padding(.vertical, UIStyle.spaceXXL)
             .background(
                 VisualEffectView(material: .popover, blendingMode: .withinWindow)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: .gray.opacity(0.25), radius: 20, x: 0, y: 10)
+                    .clipShape(RoundedRectangle(cornerRadius: UIStyle.radiusXL, style: .continuous))
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: UIStyle.radiusXL, style: .continuous)
+                    .strokeBorder(.primary.opacity(0.1), lineWidth: UIStyle.hairline)
+            )
+            .uiElevatedShadow()
             .frame(width: 600)
-            .shadow(radius: 0)  // Remove outer shadow since we added it to the background
         }
-        // Ensure the overlay covers the full view (so it behaves like a popover).
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .onAppear {
             pickRandomWallpaper()
@@ -200,12 +208,10 @@ struct RandomOverlayView: View {
     private func deleteWallpaper(_ wallpaper: ImageFile) {
         do {
             try FileManager.default.removeItem(at: wallpaper.url)
-            // Remove from wallpaper list
             if let index = viewModel.wallpapers.firstIndex(where: { $0.id == wallpaper.id }) {
                 viewModel.wallpapers.remove(at: index)
                 viewModel.updateFilteredWallpapers()
             }
-            // Pick a new random wallpaper
             pickRandomWallpaper()
         } catch {
             print("Failed to delete wallpaper: \(error)")

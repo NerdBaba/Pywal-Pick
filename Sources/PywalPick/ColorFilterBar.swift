@@ -21,14 +21,14 @@ struct ColorFilterBar: View {
     let colorCounts: [ColorGroup: Int]
     let totalCount: Int
 
-    private let slant: CGFloat = 8
-    private let swatchHeight: CGFloat = 32
-    private let swatchMinWidth: CGFloat = 48
+    private let slant: CGFloat = 7
+    private let swatchHeight: CGFloat = 28
+    private let swatchMinWidth: CGFloat = 44
 
     var body: some View {
         GeometryReader { geometry in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: max(min(geometry.size.width * 0.008, 6), 2)) {
+                HStack(spacing: max(min(geometry.size.width * 0.008, 5), 2)) {
                     allButton(availableWidth: geometry.size.width)
 
                     ForEach(ColorGroup.displayOrder, id: \.self) { group in
@@ -36,6 +36,7 @@ struct ColorFilterBar: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .padding(.horizontal, 2)
                 .frame(minWidth: geometry.size.width, alignment: .trailing)
             }
         }
@@ -44,15 +45,31 @@ struct ColorFilterBar: View {
 
     private func allButton(availableWidth: CGFloat) -> some View {
         let isSelected = selectedGroup == nil
-        return ParallelogramShape(slant: slant)
-            .fill(isSelected ? AnyShapeStyle(.blue.opacity(0.8)) : AnyShapeStyle(Color.secondary.opacity(0.2)))
-            .overlay(
-                Text("\(totalCount)")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(isSelected ? .white : .secondary)
-            )
-            .frame(width: max(min(availableWidth * 0.07, swatchMinWidth + 16), 36), height: swatchHeight)
-            .onTapGesture { selectedGroup = nil }
+        return Button {
+            selectedGroup = nil
+        } label: {
+            ParallelogramShape(slant: slant)
+                .fill(isSelected ? AnyShapeStyle(Color.accentColor.opacity(0.9)) : AnyShapeStyle(Color.secondary.opacity(0.18)))
+                .overlay(
+                    ParallelogramShape(slant: slant)
+                        .stroke(
+                            isSelected ? Color.accentColor.opacity(0.9) : Color.primary.opacity(0.08),
+                            lineWidth: isSelected ? UIStyle.hairline * 1.5 : UIStyle.hairline
+                        )
+                )
+                .overlay(
+                    Text("\(totalCount)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(isSelected ? .white : .secondary)
+                )
+                .frame(
+                    width: max(min(availableWidth * 0.07, swatchMinWidth + 14), 34),
+                    height: swatchHeight
+                )
+                .shadow(color: isSelected ? Color.accentColor.opacity(0.25) : .clear, radius: 4, y: 1)
+        }
+        .buttonStyle(.plain)
+        .help("Show all colors")
     }
 
     @ViewBuilder
@@ -62,20 +79,37 @@ struct ColorFilterBar: View {
 
         if count > 0 {
             let baseColor = Color(group.representativeColor)
-            ParallelogramShape(slant: slant)
-                .fill(isSelected ? AnyShapeStyle(baseColor) : AnyShapeStyle(baseColor.opacity(0.35)))
-                .overlay(
-                    Text("\(count)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(isSelected ? .white : .secondary.opacity(0.8))
-                )
-                .frame(
-                    width: max(min(availableWidth * 0.06, max(swatchMinWidth, CGFloat(count.description.count * 8 + 24))), 32),
-                    height: swatchHeight
-                )
-                .onTapGesture {
-                    selectedGroup = isSelected ? nil : group
-                }
+            Button {
+                selectedGroup = isSelected ? nil : group
+            } label: {
+                ParallelogramShape(slant: slant)
+                    .fill(isSelected ? AnyShapeStyle(baseColor) : AnyShapeStyle(baseColor.opacity(0.4)))
+                    .overlay(
+                        ParallelogramShape(slant: slant)
+                            .stroke(
+                                isSelected ? Color.white.opacity(0.55) : Color.primary.opacity(0.06),
+                                lineWidth: isSelected ? UIStyle.selectionLineWidth : UIStyle.hairline
+                            )
+                    )
+                    .overlay(
+                        Text("\(count)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(isSelected ? .white : .primary.opacity(0.75))
+                    )
+                    .frame(
+                        width: max(
+                            min(
+                                availableWidth * 0.06,
+                                max(swatchMinWidth, CGFloat(count.description.count * 8 + 22))
+                            ),
+                            30
+                        ),
+                        height: swatchHeight
+                    )
+                    .shadow(color: isSelected ? baseColor.opacity(0.35) : .clear, radius: 4, y: 1)
+            }
+            .buttonStyle(.plain)
+            .help(group.rawValue.capitalized)
         }
     }
 }

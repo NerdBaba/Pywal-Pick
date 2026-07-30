@@ -1,5 +1,6 @@
 // Import shared types
 import Foundation
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -31,7 +32,7 @@ class ThumbnailCache: @unchecked Sendable {
 
     // In-memory cache for instant access
     private var memoryCache: [String: NSImage] = [:]
-    private let maxMemoryCacheSize = 100
+    private let maxMemoryCacheSize = 300
     private var cacheAccessOrder: [String] = []
 
     var cacheDirectory: URL {
@@ -54,6 +55,20 @@ class ThumbnailCache: @unchecked Sendable {
         print(
             "📊 Thumbnail Cache Stats: \(totalCacheHits) hits, \(totalCacheMisses) misses, Avg gen time: \(totalGenerationTime / Double(max(1, totalCacheHits + totalCacheMisses)))s"
         )
+    }
+
+    /// Clears memory + disk thumbnail cache so thumbnails regenerate on next load.
+    func clearAll() {
+        cacheLock.lock()
+        memoryCache.removeAll()
+        cacheAccessOrder.removeAll()
+        totalCacheHits = 0
+        totalCacheMisses = 0
+        totalGenerationTime = 0
+        cacheLock.unlock()
+
+        try? fileManager.removeItem(at: cacheDir)
+        try? fileManager.createDirectory(at: cacheDir, withIntermediateDirectories: true)
     }
 
     private func updateMemoryCacheAccessOrder(for key: String) {
@@ -118,6 +133,26 @@ class ThumbnailCache: @unchecked Sendable {
         return generateAndCacheThumbnailAsync(for: imageURL, size: size, synchronous: true)
     }
 
+    /// Async convenience for UI: memory → disk → ImageIO generate.
+    func loadThumbnail(for imageURL: URL, size: ThumbnailSize) async -> NSImage? {
+        if let cached = getCachedThumbnailImage(for: imageURL, size: size) {
+            return cached
+        }
+
+        return await withCheckedContinuation { continuation in
+            cacheQueue.async {
+                if let cached = self.getCachedThumbnailImage(for: imageURL, size: size) {
+                    continuation.resume(returning: cached)
+                    return
+                }
+                _ = self.generateAndCacheThumbnailAsync(
+                    for: imageURL, size: size, synchronous: true)
+                continuation.resume(
+                    returning: self.getCachedThumbnailImage(for: imageURL, size: size))
+            }
+        }
+    }
+
     private func generateAndCacheThumbnailAsync(
         for imageURL: URL, size: ThumbnailSize, synchronous: Bool = false
     ) -> URL? {
@@ -130,50 +165,45 @@ class ThumbnailCache: @unchecked Sendable {
         }
 
         let workItem = DispatchWorkItem {
+            let maxPixel = max(size.pixelSize.width, size.pixelSize.height)
+            let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+            guard
+                let source = CGImageSourceCreateWithURL(
+                    imageURL as CFURL, sourceOptions as CFDictionary)
+            else { return }
+
+            let thumbOptions: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: Int(maxPixel),
+                kCGImageSourceShouldCacheImmediately: true
+            ]
+
+            guard
+                let cgImage = CGImageSourceCreateThumbnailAtIndex(
+                    source, 0, thumbOptions as CFDictionary)
+            else { return }
+
+            let resizedImage = NSImage(
+                cgImage: cgImage,
+                size: NSSize(width: cgImage.width, height: cgImage.height)
+            )
+
+            let bitmap = NSBitmapImageRep(cgImage: cgImage)
+            guard
+                let jpegData = bitmap.representation(
+                    using: .jpeg, properties: [.compressionFactor: 0.78])
+            else { return }
+
             do {
-                let imageData = try Data(contentsOf: imageURL)
-                guard let nsImage = NSImage(data: imageData), nsImage.isValid else {
-                    return
-                }
+                try jpegData.write(to: cacheURL, options: .atomic)
 
-                // Calculate target size maintaining 16:9 aspect ratio
-                let targetSize = size.pixelSize
-
-                // Create thumbnail with better performance
-                let resizedImage = NSImage(size: targetSize)
-                resizedImage.lockFocus()
-
-                let ctx = NSGraphicsContext.current!.cgContext
-                ctx.interpolationQuality = .medium  // Medium for better performance
-
-                nsImage.draw(
-                    in: NSRect(origin: .zero, size: targetSize),
-                    from: NSRect(origin: .zero, size: nsImage.size),
-                    operation: .copy, fraction: 1.0)
-                resizedImage.unlockFocus()
-
-                // Save as JPEG to cache with better compression
-                if let tiffData = resizedImage.tiffRepresentation,
-                    let bitmap = NSBitmapImageRep(data: tiffData),
-                    let jpegData = bitmap.representation(
-                        using: .jpeg, properties: [.compressionFactor: 0.75])
-                {
-                    try jpegData.write(to: cacheURL, options: .atomic)
-
-                    // Cache in memory for instant access
-                    let cacheKey = "\(imageURL.path.hashValue)_\(size.rawValue)"
-                    self.cacheLock.lock()
-                    self.memoryCache[cacheKey] = resizedImage
-                    self.updateMemoryCacheAccessOrder(for: cacheKey)
-                    self.totalGenerationTime += (CFAbsoluteTimeGetCurrent() - startTime)
-                    self.cacheLock.unlock()
-
-                    let generationTime = CFAbsoluteTimeGetCurrent() - startTime
-                    print(
-                        "⚡ Generated thumbnail in \(String(format: "%.3f", generationTime))s for \(imageURL.lastPathComponent)"
-                    )
-                }
-
+                let cacheKey = "\(imageURL.path.hashValue)_\(size.rawValue)"
+                self.cacheLock.lock()
+                self.memoryCache[cacheKey] = resizedImage
+                self.updateMemoryCacheAccessOrder(for: cacheKey)
+                self.totalGenerationTime += (CFAbsoluteTimeGetCurrent() - startTime)
+                self.cacheLock.unlock()
             } catch {
                 print("Failed to generate thumbnail for \(imageURL.lastPathComponent): \(error)")
             }
@@ -213,31 +243,36 @@ public struct WallpaperSwitcherView: View {
         ZStack {
             VStack(spacing: 0) {
                 // Header
-                HStack(spacing: 16) {
-                    Image(systemName: "paintpalette.fill")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text("Pywal Pick")
-                        .font(.custom("Nunito Sans ExtraBold", size: 28))
-                        .foregroundStyle(.primary)
+                HStack(spacing: UIStyle.spaceLG) {
+                    HStack(spacing: UIStyle.spaceSM) {
+                        Image(systemName: "paintpalette.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(.tint)
+                            .symbolRenderingMode(.hierarchical)
+                        Text("Pywal Pick")
+                            .font(.custom("Nunito Sans ExtraBold", size: UIStyle.brandTitleSize))
+                            .foregroundStyle(.primary)
+                    }
 
                     Spacer()
 
-                    HStack(spacing: 8) {
+                    HStack(spacing: UIStyle.spaceSM) {
                         Button(action: {
                             viewModel.isShowingRandomOverlay = true
                         }) {
                             Label("Random", systemImage: "shuffle")
                         }
                         .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
                         .help("Select Random Wallpaper")
 
                         Button(action: {
                             openWindow(id: "settings")
                         }) {
-                            Label("Settings", systemImage: "gear")
+                            Label("Settings", systemImage: "gearshape")
                         }
                         .buttonStyle(.bordered)
+                        .controlSize(.large)
                         .help("Open Settings")
 
                         Button(action: {
@@ -247,83 +282,88 @@ public struct WallpaperSwitcherView: View {
                             Label("Refresh", systemImage: "arrow.clockwise")
                         }
                         .buttonStyle(.bordered)
+                        .controlSize(.large)
                         .help("Refresh Wallpapers")
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 12)
+                .padding(.horizontal, UIStyle.spaceXL)
+                .padding(.top, UIStyle.spaceLG)
+                .padding(.bottom, UIStyle.spaceMD)
 
                 if settingsManager.config.wallpaperFolderPath.isEmpty {
                     // No folder configured
-                    VStack(spacing: 20) {
+                    VStack(spacing: UIStyle.spaceXL) {
                         Spacer()
 
                         Image(systemName: "folder.badge.questionmark")
-                            .font(.system(size: 80))
-                            .foregroundColor(.gray)
+                            .font(.system(size: 64, weight: .light))
+                            .foregroundStyle(.secondary)
+                            .symbolRenderingMode(.hierarchical)
 
-                        VStack(spacing: 12) {
+                        VStack(spacing: UIStyle.spaceSM) {
                             Text("No Wallpaper Folder Configured")
-                                .font(.title2)
-                                .fontWeight(.semibold)
+                                .font(.title2.weight(.semibold))
 
-                            Text("Please configure a wallpaper folder in Settings to get started.")
-                                .foregroundColor(.secondary)
+                            Text("Configure a wallpaper folder in Settings to get started.")
+                                .font(.body)
+                                .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
-                                .padding(.horizontal)
+                                .padding(.horizontal, UIStyle.spaceXXL)
                         }
 
                         Button("Open Settings") {
                             openWindow(id: "settings")
                         }
                         .buttonStyle(.borderedProminent)
-                        .padding(.top)
+                        .controlSize(.large)
 
                         Spacer()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if viewModel.isLoading {
-                    VStack(spacing: 12) {
+                    VStack(spacing: UIStyle.spaceMD) {
                         ProgressView()
-                            .scaleEffect(1.5)
-                        Text("Loading wallpapers...")
-                            .font(.headline)
-                            .foregroundColor(.secondary)
+                            .controlSize(.large)
+                        Text("Loading wallpapers…")
+                            .font(UIStyle.sectionTitle)
+                            .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if viewModel.wallpapers.isEmpty {
-                    VStack(spacing: 20) {
+                    VStack(spacing: UIStyle.spaceXL) {
                         Spacer()
 
                         Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 80))
-                            .foregroundColor(.gray)
+                            .font(.system(size: 64, weight: .light))
+                            .foregroundStyle(.secondary)
+                            .symbolRenderingMode(.hierarchical)
 
-                        VStack(spacing: 12) {
+                        VStack(spacing: UIStyle.spaceSM) {
                             Text("No Wallpapers Found")
-                                .font(.title2)
-                                .fontWeight(.semibold)
+                                .font(.title2.weight(.semibold))
 
                             Text(
                                 "The configured folder doesn't contain any image files, or the path is invalid."
                             )
-                            .foregroundColor(.secondary)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal)
+                            .padding(.horizontal, UIStyle.spaceXXL)
                         }
 
-                        HStack(spacing: 12) {
+                        HStack(spacing: UIStyle.spaceMD) {
                             Button("Check Settings") {
                                 openWindow(id: "settings")
                             }
                             .buttonStyle(.bordered)
+                            .controlSize(.large)
 
                             Button("Refresh") {
                                 viewModel.loadWallpapers(
                                     from: settingsManager.config.wallpaperFolderPath)
                             }
                             .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
                         }
 
                         Spacer()
@@ -335,20 +375,20 @@ public struct WallpaperSwitcherView: View {
 
                         VStack(spacing: 0) {
                             // Search and sorting controls
-                            VStack(spacing: 24) {
+                            VStack(spacing: UIStyle.spaceLG) {
                                 // Search section
-                                HStack(spacing: 16) {
-                                    HStack(spacing: 8) {
+                                HStack(spacing: UIStyle.spaceLG) {
+                                    HStack(spacing: UIStyle.spaceSM) {
                                         Image(systemName: "magnifyingglass")
                                             .foregroundStyle(.secondary)
-                                            .font(.system(size: 16, weight: .medium))
+                                            .font(.system(size: 15, weight: .semibold))
                                         TextField(
-                                            "Search wallpapers...", text: $viewModel.searchQuery
+                                            "Search wallpapers…", text: $viewModel.searchQuery
                                         )
                                         .textFieldStyle(.plain)
-                                        .font(.system(size: 16, weight: .regular, design: .rounded))
+                                        .font(.system(size: 15, weight: .regular, design: .rounded))
                                         .foregroundStyle(.primary)
-                                        .frame(minWidth: 250, maxWidth: 350)
+                                        .frame(minWidth: 240, maxWidth: 360)
                                         .focused($isSearchFocused)
                                         if !viewModel.searchQuery.isEmpty {
                                             Button(action: {
@@ -356,17 +396,13 @@ public struct WallpaperSwitcherView: View {
                                             }) {
                                                 Image(systemName: "xmark.circle.fill")
                                                     .foregroundStyle(.secondary)
-                                                    .font(.system(size: 16, weight: .medium))
+                                                    .symbolRenderingMode(.hierarchical)
                                             }
                                             .buttonStyle(.plain)
                                             .help("Clear search")
                                         }
                                     }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 12)
-                                    .background(.ultraThinMaterial)
-                                    .background(Color.white.opacity(0.05))
-                                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                                    .uiGlassChip(cornerRadius: UIStyle.radiusLG)
                                     .onTapGesture {
                                         isSearchFocused = true
                                     }
@@ -374,39 +410,25 @@ public struct WallpaperSwitcherView: View {
                                     Spacer()
 
                                     Text("\(viewModel.filteredWallpapers.count) wallpapers")
-                                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                                        .foregroundStyle(.secondary.opacity(0.9))
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 8)
-                                        .background(.ultraThinMaterial)
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                        .font(UIStyle.controlLabel)
+                                        .foregroundStyle(.secondary)
+                                        .uiGlassChip(cornerRadius: UIStyle.radiusMD)
                                 }
 
                                 // Sorting section
-                                HStack(spacing: 12) {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "arrow.up.arrow.down")
-                                            .foregroundStyle(.secondary)
-                                            .font(.system(size: 14, weight: .medium))
-                                        Text("Sort by:")
-                                            .font(
-                                                .system(size: 14, weight: .medium, design: .rounded)
-                                            )
-                                            .foregroundStyle(.primary)
-                                    }
+                                HStack(spacing: UIStyle.spaceMD) {
+                                    Label("Sort", systemImage: "arrow.up.arrow.down")
+                                        .font(UIStyle.controlLabel)
+                                        .foregroundStyle(.secondary)
+                                        .labelStyle(.titleAndIcon)
 
-                                    Picker("", selection: $viewModel.sortOption) {
+                                    Picker("Sort by", selection: $viewModel.sortOption) {
                                         ForEach(SortOption.allCases, id: \.self) { option in
-                                            Text(option.rawValue)
-                                                .font(
-                                                    .system(
-                                                        size: 14, weight: .regular, design: .rounded
-                                                    )
-                                                )
-                                                .tag(option)
+                                            Text(option.rawValue).tag(option)
                                         }
                                     }
                                     .pickerStyle(.segmented)
+                                    .labelsHidden()
                                     .fixedSize()
                                     .onChange(of: viewModel.sortOption) { _, _ in
                                         // Sorting happens automatically in filteredWallpapers
@@ -415,40 +437,32 @@ public struct WallpaperSwitcherView: View {
                                     Button(action: {
                                         viewModel.sortOrderAscending.toggle()
                                     }) {
-                                        HStack(spacing: 6) {
-                                            Image(
-                                                systemName: viewModel.sortOrderAscending
-                                                    ? "arrow.up" : "arrow.down"
-                                            )
-                                            .font(.system(size: 14, weight: .medium))
-                                            Text(viewModel.sortOrderLabel)
-                                                .font(
-                                                    .system(
-                                                        size: 13, weight: .regular, design: .rounded
-                                                    ))
-                                        }
-                                        .foregroundStyle(.primary)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 6)
+                                        Label(
+                                            viewModel.sortOrderLabel,
+                                            systemImage: viewModel.sortOrderAscending
+                                                ? "arrow.up" : "arrow.down"
+                                        )
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
                                     .fixedSize()
                                     .help("Toggle sort order")
 
-                                    Spacer(minLength: 16)
+                                    Spacer(minLength: UIStyle.spaceLG)
 
-                                    Picker("", selection: $viewModel.viewMode) {
+                                    Picker("View mode", selection: $viewModel.viewMode) {
                                         ForEach(ViewMode.allCases) { mode in
                                             Image(systemName: mode.icon)
                                                 .tag(mode)
                                         }
                                     }
                                     .pickerStyle(.segmented)
+                                    .labelsHidden()
                                     .fixedSize()
                                     .help("Toggle view mode")
 
-                                    Spacer(minLength: 16)
-                                    
+                                    Spacer(minLength: UIStyle.spaceLG)
+
                                     // Color filter bar inline
                                     ColorFilterBar(
                                         selectedGroup: $viewModel.selectedColorFilter,
@@ -459,8 +473,8 @@ public struct WallpaperSwitcherView: View {
                                     .frame(maxWidth: .infinity, alignment: .trailing)
                                 }
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
+                            .padding(.horizontal, UIStyle.spaceLG)
+                            .padding(.vertical, UIStyle.spaceMD)
 
                             .onChange(of: viewModel.selectedColorFilter) { _, newFilter in
                                 print("🎨 Color filter changed to: \(newFilter?.rawValue ?? "none")")
@@ -528,10 +542,7 @@ public struct WallpaperSwitcherView: View {
                             return .handled
                         }
                     }
-                    .padding(12)
-                    .background(.ultraThinMaterial.opacity(0.3))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .padding(8)
+                    .uiContentWell()
                     .onKeyPress(characters: CharacterSet(charactersIn: "f"), phases: .down) {
                         press in
                         if press.modifiers.contains(.command) {
@@ -604,28 +615,44 @@ public struct WallpaperSwitcherView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(NotificationCenter.default.publisher(for: CacheMaintenance.rebuildNotification)) { _ in
+            thumbnailCache.removeAll()
+            carouselRefreshID = UUID()
+            let folder = settingsManager.config.wallpaperFolderPath
+            guard !folder.isEmpty else { return }
+            viewModel.loadWallpapers(from: folder)
+        }
     }
 
     private var gridContentView: some View {
         ScrollViewReader { proxy in
             GeometryReader { geometry in
+                let columns = settingsManager.config.gridColumns
+                let gridWidth = geometry.size.width - 24
+                let spacing: CGFloat = 12
+                let cardWidth =
+                    (gridWidth - CGFloat(columns - 1) * spacing - 24) / CGFloat(columns)
+                let imageHeight = cardWidth * 0.56
+
                 ScrollView {
                     LazyVGrid(
                         columns: Array(
-                            repeating: GridItem(.flexible(), spacing: 12),
-                            count: settingsManager.config.gridColumns),
-                        spacing: 12
+                            repeating: GridItem(.flexible(), spacing: spacing),
+                            count: columns),
+                        spacing: spacing
                     ) {
                         ForEach(
                             Array(viewModel.filteredWallpapers.enumerated()),
-                            id: \.element.id
+                            id: \.element.url
                         ) { index, wallpaper in
                             WallpaperCardView(
                                 wallpaper: wallpaper,
-                                isSelected: viewModel.currentWallpaper?.id == wallpaper.id,
+                                isSelected: viewModel.currentWallpaper?.url == wallpaper.url,
                                 isHighlighted: viewModel.highlightedIndex == index,
-                                availableWidth: geometry.size.width - 24,
-                                columns: settingsManager.config.gridColumns,
+                                cardWidth: cardWidth,
+                                imageHeight: imageHeight,
+                                showName: settingsManager.config.showWallpaperNames,
+                                placeholderColor: viewModel.placeholderColor(for: wallpaper.url),
                                 onSelect: {
                                     let isReselect = lastSelectedWallpaperURL == wallpaper.url
                                     if isReselect {
@@ -649,7 +676,8 @@ public struct WallpaperSwitcherView: View {
             .scrollIndicators(.visible)
             .onChange(of: viewModel.highlightedIndex) { _, newIndex in
                 if let index = newIndex, index < viewModel.filteredWallpapers.count {
-                    withAnimation(.easeInOut(duration: 0.3)) {
+                    // Avoid animating scroll-to during free scrolling; only when highlight moves via keyboard.
+                    withAnimation(.easeInOut(duration: 0.2)) {
                         proxy.scrollTo(index, anchor: .center)
                     }
                 }
@@ -668,6 +696,7 @@ public struct WallpaperSwitcherView: View {
                                 isSelected: viewModel.currentWallpaper?.id == wallpaper.id,
                                 isCentered: viewModel.highlightedIndex == index,
                                 cardWidth: min(max(geometry.size.width * 0.55, 480), 960),
+                                showName: settingsManager.config.showWallpaperNames,
                                 onSelect: {
                                     let isReselect = lastSelectedWallpaperURL == wallpaper.url
                                     if isReselect {
@@ -1263,6 +1292,12 @@ public class WallpaperSwitcherViewModel: ObservableObject {
 
     public init() {}
 
+    /// Cheap placeholder for grid cells — uses already-computed color groups, never decodes images.
+    func placeholderColor(for url: URL) -> Color? {
+        guard let group = colorGroups[url] else { return nil }
+        return Color(group.representativeColor).opacity(0.35)
+    }
+
     func updateFilteredWallpapers() {
         let log1 =
             "📊 Updating filtered wallpapers. Total: \(wallpapers.count), Sort: \(sortOption), Ascending: \(sortOrderAscending)"
@@ -1626,76 +1661,78 @@ struct WallpaperCardView: View {
     let wallpaper: ImageFile
     let isSelected: Bool
     let isHighlighted: Bool
-    let availableWidth: CGFloat
-    let columns: Int
+    let cardWidth: CGFloat
+    let imageHeight: CGFloat
+    let showName: Bool
+    let placeholderColor: Color?
     let onSelect: () -> Void
 
     @State private var thumbnailImage: Image?
-    @State private var dominantColor: Color?
-
-    private var cardWidth: CGFloat {
-        (availableWidth - CGFloat(columns - 1) * 12 - 24) / CGFloat(columns)
-    }
-
-    private var imageHeight: CGFloat {
-        cardWidth * 0.56
-    }
 
     var body: some View {
         VStack(spacing: 4) {
-            ZStack {
-                if let dominantColor = dominantColor {
-                    dominantColor
-                        .frame(width: cardWidth, height: imageHeight)
-                } else {
-                    Rectangle()
-                        .fill(.quaternary)
-                        .frame(width: cardWidth, height: imageHeight)
-                }
+            ZStack(alignment: .topTrailing) {
+                (placeholderColor ?? Color.primary.opacity(0.06))
+                    .frame(width: cardWidth, height: imageHeight)
 
-                if let thumbnailImage = thumbnailImage {
+                if let thumbnailImage {
                     thumbnailImage
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: cardWidth, height: imageHeight)
                         .clipped()
-                } else {
-                    Image(systemName: "photo")
-                        .foregroundStyle(.secondary)
+                        .transaction { $0.animation = nil }
                 }
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.white, .blue)
-                        .font(.title2)
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.accentColor)
+                        .font(.title3)
+                        .padding(6)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .frame(width: cardWidth, height: imageHeight)
+            .clipShape(RoundedRectangle(cornerRadius: UIStyle.radiusSM, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: UIStyle.radiusSM, style: .continuous)
+                    .strokeBorder(
+                        isHighlighted ? Color.accentColor : Color.clear,
+                        lineWidth: isHighlighted ? UIStyle.highlightLineWidth : 0
+                    )
+            )
 
-            Text(wallpaper.name)
-                .font(.caption2)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            if showName {
+                Text(wallpaper.name)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(width: cardWidth - 4)
+            }
         }
         .frame(width: cardWidth)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.tint, lineWidth: isHighlighted ? 2 : 0)
-        )
-        .onTapGesture { onSelect() }
-        .task {
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+        .task(id: wallpaper.url) {
+            // Prefer disk/memory ThumbnailCache (prewarmed on load); fall back to ImageIO.
+            let thumbSize: ThumbnailSize =
+                cardWidth <= 140 ? .small : (cardWidth <= 260 ? .medium : .large)
+
+            if let nsImage = await ThumbnailCache.shared.loadThumbnail(
+                for: wallpaper.url, size: thumbSize)
+            {
+                thumbnailImage = Image(nsImage: nsImage)
+                return
+            }
+
             if let nsImage = await OptimizedImageCache.shared.loadThumbnail(
                 for: wallpaper.url,
                 size: CGSize(width: cardWidth, height: imageHeight)
             ) {
                 thumbnailImage = Image(nsImage: nsImage)
             }
-            if let color = DominantColorCache.shared.dominantColor(for: wallpaper.url) {
-                dominantColor = Color(color)
-            }
         }
-
     }
 }
 
@@ -1704,6 +1741,7 @@ struct CarouselCardView: View {
     let isSelected: Bool
     let isCentered: Bool
     let cardWidth: CGFloat
+    let showName: Bool
     let onSelect: () -> Void
 
     @State private var thumbnailImage: Image?
@@ -1713,12 +1751,11 @@ struct CarouselCardView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                Rectangle()
+        VStack(spacing: UIStyle.spaceSM) {
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous)
                     .fill(.quaternary)
                     .frame(width: cardWidth, height: cardHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 if let thumbnailImage = thumbnailImage {
                     thumbnailImage
@@ -1726,45 +1763,50 @@ struct CarouselCardView: View {
                         .aspectRatio(contentMode: .fill)
                         .frame(width: cardWidth, height: cardHeight)
                         .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay {
-                    if isCentered {
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(.white, lineWidth: 1.5)
-                            .opacity(0.45)
-                    }
-                }
+                        .clipShape(RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous))
                 } else {
                     Image(systemName: "photo")
                         .foregroundStyle(.secondary)
-                        .font(.system(size: 40))
+                        .font(.system(size: 36, weight: .light))
+                        .symbolRenderingMode(.hierarchical)
                 }
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.white, .blue)
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.accentColor)
                         .font(.title2)
-                        .padding(8)
+                        .padding(UIStyle.spaceSM)
+                        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
                 }
             }
+            .overlay {
+                RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous)
+                    .strokeBorder(
+                        isCentered ? Color.white.opacity(0.55) : Color.clear,
+                        lineWidth: UIStyle.selectionLineWidth
+                    )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous))
 
-            Text(wallpaper.name)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(width: cardWidth)
+            if showName {
+                Text(wallpaper.name)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(width: cardWidth)
+            }
         }
         .frame(width: cardWidth)
         .scaleEffect(isCentered ? 1.08 : 0.92)
-        .opacity(isCentered ? 1.0 : 0.75)
+        .opacity(isCentered ? 1.0 : 0.72)
         .shadow(
-            color: isCentered ? .black.opacity(0.3) : .black.opacity(0.1),
-            radius: isCentered ? 12 : 6,
+            color: isCentered ? .black.opacity(0.28) : .black.opacity(0.1),
+            radius: isCentered ? 14 : 6,
             x: 0,
             y: isCentered ? 8 : 4
         )
-        .animation(.easeInOut(duration: 0.3), value: isCentered)
+        .animation(.easeInOut(duration: 0.28), value: isCentered)
         .onTapGesture { onSelect() }
         .task {
             if let nsImage = await OptimizedImageCache.shared.loadThumbnail(
@@ -1782,20 +1824,23 @@ struct BackendToastView: View {
     let message: String
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "paintpalette")
-                .font(.system(size: 14, weight: .medium))
+        HStack(spacing: UIStyle.spaceSM) {
+            Image(systemName: "paintpalette.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
             Text(message)
-                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16)
+        .foregroundStyle(.primary)
+        .padding(.horizontal, UIStyle.spaceLG)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
-        .background(Color.black.opacity(0.6))
-        .clipShape(Capsule())
-        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
-        .padding(.top, 12)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(.primary.opacity(0.1), lineWidth: UIStyle.hairline)
+        )
+        .uiElevatedShadow(UIStyle.toastShadow)
+        .padding(.top, UIStyle.spaceMD)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
