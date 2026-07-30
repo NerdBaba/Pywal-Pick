@@ -1,6 +1,7 @@
 # Pywal Pick
 
 Pywal Pick is a macOS application that lets you browse your wallpaper collection and apply them using `pywal` to generate color schemes for your system.
+<img width="1688" height="942" alt="image" src="https://github.com/user-attachments/assets/05e52e0f-8c90-4e4c-8021-5832bec89cb4" />
 
 ## Features
 
