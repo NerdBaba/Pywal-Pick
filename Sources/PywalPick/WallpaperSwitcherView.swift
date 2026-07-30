@@ -758,7 +758,12 @@ public struct WallpaperSwitcherView: View {
         RandomOverlayView(
             viewModel: viewModel,
             isShowing: $viewModel.isShowingRandomOverlay,
-            setWallpaper: { wallpaper in setWallpaper(wallpaper) }
+            setWallpaper: { wallpaper in
+                // Apply wallpaper, then move browser selection/focus to that item
+                // so the grid/carousel match what was just set from Random.
+                setWallpaper(wallpaper)
+                focusWallpaperInBrowser(wallpaper)
+            }
         )
         .zIndex(100)
         .transition(
@@ -767,6 +772,44 @@ public struct WallpaperSwitcherView: View {
                 removal: .opacity
             )
         )
+    }
+
+    /// Select the wallpaper in the grid/carousel: update highlight, scroll into
+    /// view, and restore keyboard focus. Clears search/color filters if needed
+    /// so a randomly chosen wallpaper that is filtered out becomes visible.
+    private func focusWallpaperInBrowser(_ wallpaper: ImageFile) {
+        lastSelectedWallpaperURL = wallpaper.url
+        viewModel.setCurrentWallpaper(wallpaper)
+
+        let isVisible = viewModel.filteredWallpapers.contains { $0.id == wallpaper.id }
+        if !isVisible {
+            if !viewModel.searchQuery.isEmpty {
+                viewModel.searchQuery = ""
+            }
+            if viewModel.selectedColorFilter != nil {
+                viewModel.selectedColorFilter = nil
+            } else {
+                // searchQuery didSet already refreshed; color filter onChange
+                // also refreshes — only force-update when neither changed.
+                viewModel.updateFilteredWallpapers()
+            }
+        }
+
+        // Defer highlight so any filter onChange that clears highlightedIndex
+        // runs first, then we land on the chosen wallpaper.
+        DispatchQueue.main.async {
+            guard let index = viewModel.filteredWallpapers.firstIndex(where: { $0.id == wallpaper.id })
+            else { return }
+
+            viewModel.highlightedIndex = index
+            if viewModel.viewMode == .carousel {
+                carouselScrollPosition = "\(index)"
+                carouselScrollTarget = index
+                isCarouselFocused = true
+            } else {
+                isGridFocused = true
+            }
+        }
     }
 
     private func setWallpaper(_ wallpaper: ImageFile, backend: WalBackend? = nil) {
@@ -1489,6 +1532,18 @@ public class WallpaperSwitcherViewModel: ObservableObject {
 
     func setCurrentWallpaper(_ wallpaper: ImageFile) {
         currentWallpaper = wallpaper
+    }
+
+    /// Move keyboard/selection highlight to `wallpaper` within the current
+    /// filtered list. Returns the index if found, otherwise `nil`.
+    @discardableResult
+    func highlightWallpaper(_ wallpaper: ImageFile) -> Int? {
+        guard let index = filteredWallpapers.firstIndex(where: { $0.id == wallpaper.id }) else {
+            return nil
+        }
+        highlightedIndex = index
+        currentWallpaper = wallpaper
+        return index
     }
 
     func randomizeWallpaper() {

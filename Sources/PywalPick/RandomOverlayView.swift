@@ -107,9 +107,9 @@ struct RandomOverlayView: View {
                     .controlSize(.large)
 
                     Button(action: {
-                        // Set as wallpaper
+                        // Set as wallpaper. Parent `setWallpaper` also focuses
+                        // the browser selection on this item (grid/carousel).
                         if let wallpaper = selectedWallpaper {
-                            viewModel.setCurrentWallpaper(wallpaper)
                             setWallpaper(wallpaper)
                             isShowing = false
                         }
