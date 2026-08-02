@@ -39,7 +39,8 @@ fi
 # Copy Info.plist
 cp Info.plist PywalPick.app/Contents/Info.plist
 
-# Copy assets (including AppIcon from xcassets)
+# Copy asset catalog (includes AppIcon)
+# macOS 14+ uses CFBundleIconName + Assets.xcassets directly; no .icns needed
 cp -r assets/Assets.xcassets PywalPick.app/Contents/Resources/Assets.xcassets
 
 echo "Pywal Pick.app created successfully!"

@@ -132,7 +132,8 @@ func discoverWallpapers() -> [ImageFile] {
         fatalError("Error: Wallpaper folder does not exist at: \(config.wallpaperFolderPath)")
     }
 
-    let supportedTypes: Set<UTType> = [.jpeg, .png, .gif, .bmp, .tiff, .webP]
+    let supportedTypes = SupportedWallpaperFormats.utTypes
+    let supportedExtensions = SupportedWallpaperFormats.extensions
 
     let enumerator = FileManager.default.enumerator(
         at: folderURL,
@@ -142,13 +143,21 @@ func discoverWallpapers() -> [ImageFile] {
 
     var imageFiles: [ImageFile] = []
     while let fileURL = enumerator?.nextObject() as? URL {
-        guard
-            let fileType = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType,
-            supportedTypes.contains(fileType)
-        else {
-            continue
+        let fileType = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType
+        var accepted = false
+
+        if let fileType = fileType, supportedTypes.contains(fileType) {
+            accepted = true
+        } else {
+            let ext = fileURL.pathExtension.lowercased()
+            if supportedExtensions.contains(ext) {
+                accepted = true
+            }
         }
-        imageFiles.append(ImageFile(url: fileURL))
+
+        if accepted {
+            imageFiles.append(ImageFile(url: fileURL))
+        }
     }
 
     return imageFiles.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }

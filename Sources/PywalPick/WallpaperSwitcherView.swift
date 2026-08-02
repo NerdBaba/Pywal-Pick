@@ -1457,7 +1457,7 @@ public class WallpaperSwitcherViewModel: ObservableObject {
         }
     }
 
-    private let supportedImageTypes: [UTType] = [.jpeg, .png, .gif, .bmp, .tiff, .webP]
+    private let supportedImageTypes: [UTType] = SupportedWallpaperFormats.utTypes
 
     var sortOrderLabel: String {
         switch sortOption {
@@ -1491,14 +1491,22 @@ public class WallpaperSwitcherViewModel: ObservableObject {
 
             var imageFiles: [ImageFile] = []
             while let fileURL = enumerator?.nextObject() as? URL {
-                guard
-                    let fileType = try? fileURL.resourceValues(forKeys: [.contentTypeKey])
-                        .contentType,
-                    supportedImageTypes.contains(fileType)
-                else {
-                    continue
+                let fileType = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType
+                var accepted = false
+
+                if let fileType = fileType, supportedImageTypes.contains(fileType) {
+                    accepted = true
+                } else {
+                    let ext = fileURL.pathExtension.lowercased()
+                    if SupportedWallpaperFormats.extensions.contains(ext) {
+                        // Extension-based fallback for files UTType doesn't recognize (e.g., .avif)
+                        accepted = true
+                    }
                 }
-                imageFiles.append(ImageFile(url: fileURL))
+
+                if accepted {
+                    imageFiles.append(ImageFile(url: fileURL))
+                }
             }
 
             print("📷 Found \(imageFiles.count) image files")
