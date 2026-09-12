@@ -129,6 +129,7 @@ public struct AppConfig: Codable, Sendable {
     public var transitionDuration: Double
     public var transitionFPS: Int
     public var showWallpaperNames: Bool
+    public var wallhavenAPIKey: String
 
     public static let `default` = AppConfig(
         wallpaperFolderPath: "",
@@ -145,7 +146,8 @@ public struct AppConfig: Codable, Sendable {
         transitionType: .fade,
         transitionDuration: 1.0,
         transitionFPS: 60,
-        showWallpaperNames: true
+        showWallpaperNames: true,
+        wallhavenAPIKey: ""
     )
 
     private static let configURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/PywalPick/config.json")
@@ -165,7 +167,8 @@ public struct AppConfig: Codable, Sendable {
         transitionType: TransitionType,
         transitionDuration: Double,
         transitionFPS: Int,
-        showWallpaperNames: Bool
+        showWallpaperNames: Bool,
+        wallhavenAPIKey: String = ""
     ) {
         self.wallpaperFolderPath = wallpaperFolderPath
         self.dummyWallpaperFile = dummyWallpaperFile
@@ -182,6 +185,7 @@ public struct AppConfig: Codable, Sendable {
         self.transitionDuration = transitionDuration
         self.transitionFPS = transitionFPS
         self.showWallpaperNames = showWallpaperNames
+        self.wallhavenAPIKey = wallhavenAPIKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -202,6 +206,7 @@ public struct AppConfig: Codable, Sendable {
         transitionDuration = try c.decodeIfPresent(Double.self, forKey: .transitionDuration) ?? d.transitionDuration
         transitionFPS = try c.decodeIfPresent(Int.self, forKey: .transitionFPS) ?? d.transitionFPS
         showWallpaperNames = try c.decodeIfPresent(Bool.self, forKey: .showWallpaperNames) ?? true
+        wallhavenAPIKey = try c.decodeIfPresent(String.self, forKey: .wallhavenAPIKey) ?? ""
     }
 
     public static func load() -> AppConfig {

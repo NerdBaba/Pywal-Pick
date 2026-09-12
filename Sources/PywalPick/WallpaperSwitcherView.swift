@@ -223,6 +223,8 @@ public struct WallpaperSwitcherView: View {
     @EnvironmentObject var settingsManager: SettingsManager
     @Environment(\.openWindow) private var openWindow
     @StateObject private var viewModel = WallpaperSwitcherViewModel()
+    @StateObject private var wallhavenViewModel = WallhavenViewModel()
+    @State private var showWallhaven = false
     @State private var currentWallpaper: String?
     @State private var lastSelectedWallpaperURL: URL?
     @State private var toastMessage: String?
@@ -260,14 +262,39 @@ public struct WallpaperSwitcherView: View {
                     Spacer()
 
                     HStack(spacing: UIStyle.spaceSM) {
-                        Button(action: {
-                            viewModel.isShowingRandomOverlay = true
-                        }) {
-                            Label("Random", systemImage: "shuffle")
+                        if showWallhaven {
+                            Button(action: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showWallhaven = false
+                                }
+                            }) {
+                                Label("Library", systemImage: "photo.on.rectangle")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            .help("Back to local wallpapers")
+                        } else {
+                            Button(action: {
+                                viewModel.isShowingRandomOverlay = true
+                            }) {
+                                Label("Random", systemImage: "shuffle")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .help("Select Random Wallpaper")
                         }
-                        .buttonStyle(.borderedProminent)
+
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showWallhaven = true
+                                wallhavenViewModel.apiKey = settingsManager.config.wallhavenAPIKey
+                            }
+                        }) {
+                            Label("Wallhaven", systemImage: "globe")
+                        }
+                        .buttonStyle(.bordered)
                         .controlSize(.large)
-                        .help("Select Random Wallpaper")
+                        .help("Search wallhaven.cc")
 
                         Button(action: {
                             openWindow(id: "settings")
@@ -278,22 +305,30 @@ public struct WallpaperSwitcherView: View {
                         .controlSize(.large)
                         .help("Open Settings")
 
-                        Button(action: {
-                            viewModel.loadWallpapers(
-                                from: settingsManager.config.wallpaperFolderPath)
-                        }) {
-                            Label("Refresh", systemImage: "arrow.clockwise")
+                        if !showWallhaven {
+                            Button(action: {
+                                viewModel.loadWallpapers(
+                                    from: settingsManager.config.wallpaperFolderPath)
+                            }) {
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.large)
+                            .help("Refresh Wallpapers")
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                        .help("Refresh Wallpapers")
                     }
                 }
                 .padding(.horizontal, UIStyle.spaceXL)
                 .padding(.top, UIStyle.spaceLG)
                 .padding(.bottom, UIStyle.spaceMD)
 
-                if settingsManager.config.wallpaperFolderPath.isEmpty {
+                if showWallhaven {
+                    WallhavenView(
+                        viewModel: wallhavenViewModel,
+                        settingsManager: settingsManager
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if settingsManager.config.wallpaperFolderPath.isEmpty {
                     // No folder configured
                     VStack(spacing: UIStyle.spaceXL) {
                         Spacer()
@@ -615,6 +650,38 @@ public struct WallpaperSwitcherView: View {
 
             if showToast {
                 toastOverlay
+            }
+
+            if wallhavenViewModel.showPreview, let wallpaper = wallhavenViewModel.selectedWallpaper {
+                WallhavenPreviewView(
+                    wallpaper: wallpaper,
+                    isDownloaded: wallhavenViewModel.downloadedIds.contains(wallpaper.id),
+                    downloadProgress: wallhavenViewModel.downloadProgress[wallpaper.id],
+                    onDownload: {
+                        Task {
+                            await wallhavenViewModel.download(
+                                wallpaper,
+                                to: settingsManager.config.wallpaperFolderPath
+                            )
+                        }
+                    },
+                    onSetWallpaper: {
+                        Task {
+                            if let imageFile = await wallhavenViewModel.downloadAndSet(
+                                wallpaper,
+                                to: settingsManager.config.wallpaperFolderPath
+                            ) {
+                                await MainActor.run {
+                                    setWallpaper(imageFile)
+                                }
+                            }
+                        }
+                    },
+                    onDismiss: {
+                        wallhavenViewModel.closePreview()
+                    }
+                )
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -350,6 +350,27 @@ public struct SettingsView: View {
                     pickerType: .script,
                     apply: applyCustomScript
                 )
+
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Wallhaven API Key", systemImage: "key")
+                        .font(UIStyle.sectionTitle)
+
+                    HStack {
+                        SecureField("Enter your Wallhaven API key", text: $settingsManager.config.wallhavenAPIKey)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("Get Key") {
+                            NSWorkspace.shared.open(URL(string: "https://wallhaven.cc/settings/account")!)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    Text("Optional. Required for NSFW content and access to your collections.")
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .uiSettingsSection()
             }
             .padding(.vertical, UIStyle.spaceMD)
         }
