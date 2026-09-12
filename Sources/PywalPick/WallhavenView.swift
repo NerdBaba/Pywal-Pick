@@ -16,6 +16,7 @@ struct WallhavenView: View {
     private var wallhavenDefaultsKey: String {
         let config = settingsManager.config
         return [
+            config.wallhavenAPIKey,
             config.wallhavenDefaultCategories.sorted().joined(separator: ","),
             config.wallhavenDefaultPurity.sorted().joined(separator: ","),
             config.wallhavenDefaultSorting,

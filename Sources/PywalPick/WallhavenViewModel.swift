@@ -37,11 +37,15 @@ final class WallhavenViewModel: ObservableObject {
 
     init() {
         setupDebounce()
+        let config = AppConfig.load()
+        apiKey = config.wallhavenAPIKey
+        params = Self.params(from: config)
+        defaultsSignature = Self.signature(from: config)
     }
 
-    func applyDefaults(from config: AppConfig) {
-        apiKey = config.wallhavenAPIKey
-        let signature = [
+    private static func signature(from config: AppConfig) -> String {
+        [
+            config.wallhavenAPIKey,
             config.wallhavenDefaultCategories.sorted().joined(separator: ","),
             config.wallhavenDefaultPurity.sorted().joined(separator: ","),
             config.wallhavenDefaultSorting,
@@ -51,20 +55,31 @@ final class WallhavenViewModel: ObservableObject {
             config.wallhavenDefaultRatios.sorted().joined(separator: ","),
             config.wallhavenDefaultColor
         ].joined(separator: "|")
+    }
+
+    private static func params(from config: AppConfig) -> WallhavenSearchParams {
+        var next = WallhavenSearchParams()
+        next.categories = Set(config.wallhavenDefaultCategories.compactMap(WallhavenCategory.init(rawValue:)))
+        if next.categories.isEmpty { next.categories = [.general, .anime, .people] }
+        next.purity = Set(config.wallhavenDefaultPurity.compactMap(WallhavenPurity.init(rawValue:)))
+        if next.purity.isEmpty { next.purity = [.sfw] }
+        next.sorting = WallhavenSorting(rawValue: config.wallhavenDefaultSorting) ?? .dateAdded
+        next.order = config.wallhavenDefaultOrder.isEmpty ? "desc" : config.wallhavenDefaultOrder
+        next.topRange = WallhavenToplistRange(rawValue: config.wallhavenDefaultTopRange) ?? .oneMonth
+        next.atLeast = config.wallhavenDefaultAtLeast.isEmpty ? nil : config.wallhavenDefaultAtLeast
+        next.ratios = config.wallhavenDefaultRatios
+        next.color = config.wallhavenDefaultColor.isEmpty ? nil : WallhavenColor(rawValue: config.wallhavenDefaultColor)
+        next.page = 1
+        next.seed = nil
+        return next
+    }
+
+    func applyDefaults(from config: AppConfig) {
+        apiKey = config.wallhavenAPIKey
+        let signature = Self.signature(from: config)
         guard signature != defaultsSignature else { return }
         defaultsSignature = signature
-        params.categories = Set(config.wallhavenDefaultCategories.compactMap(WallhavenCategory.init(rawValue:)))
-        if params.categories.isEmpty { params.categories = [.general, .anime, .people] }
-        params.purity = Set(config.wallhavenDefaultPurity.compactMap(WallhavenPurity.init(rawValue:)))
-        if params.purity.isEmpty { params.purity = [.sfw] }
-        params.sorting = WallhavenSorting(rawValue: config.wallhavenDefaultSorting) ?? .dateAdded
-        params.order = config.wallhavenDefaultOrder.isEmpty ? "desc" : config.wallhavenDefaultOrder
-        params.topRange = WallhavenToplistRange(rawValue: config.wallhavenDefaultTopRange) ?? .oneMonth
-        params.atLeast = config.wallhavenDefaultAtLeast.isEmpty ? nil : config.wallhavenDefaultAtLeast
-        params.ratios = config.wallhavenDefaultRatios
-        params.color = config.wallhavenDefaultColor.isEmpty ? nil : WallhavenColor(rawValue: config.wallhavenDefaultColor)
-        params.page = 1
-        params.seed = nil
+        params = Self.params(from: config)
     }
 
     /// Re-read defaults (e.g. after Settings changes) and refresh if they changed.
