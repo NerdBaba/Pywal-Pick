@@ -207,11 +207,7 @@ struct RandomOverlayView: View {
 
     private func deleteWallpaper(_ wallpaper: ImageFile) {
         do {
-            try FileManager.default.removeItem(at: wallpaper.url)
-            if let index = viewModel.wallpapers.firstIndex(where: { $0.id == wallpaper.id }) {
-                viewModel.wallpapers.remove(at: index)
-                viewModel.updateFilteredWallpapers()
-            }
+            try viewModel.deleteWallpaper(wallpaper)
             pickRandomWallpaper()
         } catch {
             print("Failed to delete wallpaper: \(error)")

@@ -546,7 +546,11 @@ public struct SettingsView: View {
         case .folder:
             return [.folder]
         case .dummyFile:
-            return [.image, .jpeg, .png, .gif, .tiff, .webP]
+            var types: [UTType] = [.image, .jpeg, .png, .gif, .tiff, .webP]
+            if let avif = UTType(filenameExtension: "avif") {
+                types.append(avif)
+            }
+            return types
         case .walBinary:
             return [.unixExecutable, .application]
         case .script:

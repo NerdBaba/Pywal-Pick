@@ -1,4 +1,19 @@
 import Foundation
+import UniformTypeIdentifiers
+
+public enum SupportedWallpaperFormats {
+    public static let utTypes: [UTType] = {
+        var types: [UTType] = [.jpeg, .png, .gif, .bmp, .tiff, .webP]
+        if let avif = UTType(filenameExtension: "avif") {
+            types.append(avif)
+        }
+        return types
+    }()
+
+    public static let extensions: Set<String> = [
+        "jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "avif"
+    ]
+}
 
 public struct ImageFile: Identifiable, Comparable, Sendable {
     public let id = UUID()

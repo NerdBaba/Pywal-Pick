@@ -233,6 +233,9 @@ public struct WallpaperSwitcherView: View {
     @State private var carouselScrollPosition: String?
     @State private var carouselScrollTarget: Int?
     @State private var carouselRefreshID = UUID()
+    @State private var wallpaperPendingDeletion: ImageFile?
+    @State private var showingDeletionAlert = false
+    @State private var deletionErrorMessage: String?
 
     public init() {}
 
@@ -615,6 +618,33 @@ public struct WallpaperSwitcherView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .alert(
+            "Delete Wallpaper?",
+            isPresented: $showingDeletionAlert,
+            presenting: wallpaperPendingDeletion
+        ) { wallpaper in
+            Button("Delete", role: .destructive) {
+                deleteWallpaper(wallpaper)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { wallpaper in
+            Text("Are you sure you want to delete \"\(wallpaper.name)\"? This action cannot be undone.")
+        }
+        .alert(
+            "Unable to Delete Wallpaper",
+            isPresented: Binding(
+                get: { deletionErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        deletionErrorMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deletionErrorMessage ?? "The wallpaper could not be deleted.")
+        }
         .onReceive(NotificationCenter.default.publisher(for: CacheMaintenance.rebuildNotification)) { _ in
             thumbnailCache.removeAll()
             carouselRefreshID = UUID()
@@ -708,6 +738,10 @@ public struct WallpaperSwitcherView: View {
                                         setWallpaper(wallpaper)
                                     }
                                     isCarouselFocused = true
+                                },
+                                onDeleteRequest: {
+                                    wallpaperPendingDeletion = wallpaper
+                                    showingDeletionAlert = true
                                 }
                             )
                             .id("\(index)")
@@ -838,6 +872,20 @@ public struct WallpaperSwitcherView: View {
             } else {
                 isGridFocused = true
             }
+        }
+    }
+
+    private func deleteWallpaper(_ wallpaper: ImageFile) {
+        do {
+            try viewModel.deleteWallpaper(wallpaper)
+            if lastSelectedWallpaperURL == wallpaper.url {
+                lastSelectedWallpaperURL = nil
+            }
+            carouselScrollPosition = nil
+            carouselScrollTarget = nil
+            carouselRefreshID = UUID()
+        } catch {
+            deletionErrorMessage = error.localizedDescription
         }
     }
 
@@ -1457,7 +1505,7 @@ public class WallpaperSwitcherViewModel: ObservableObject {
         }
     }
 
-    private let supportedImageTypes: [UTType] = [.jpeg, .png, .gif, .bmp, .tiff, .webP]
+    private let supportedImageTypes: [UTType] = SupportedWallpaperFormats.utTypes
 
     var sortOrderLabel: String {
         switch sortOption {
@@ -1491,14 +1539,22 @@ public class WallpaperSwitcherViewModel: ObservableObject {
 
             var imageFiles: [ImageFile] = []
             while let fileURL = enumerator?.nextObject() as? URL {
-                guard
-                    let fileType = try? fileURL.resourceValues(forKeys: [.contentTypeKey])
-                        .contentType,
-                    supportedImageTypes.contains(fileType)
-                else {
-                    continue
+                let fileType = try? fileURL.resourceValues(forKeys: [.contentTypeKey]).contentType
+                var accepted = false
+
+                if let fileType = fileType, supportedImageTypes.contains(fileType) {
+                    accepted = true
+                } else {
+                    let ext = fileURL.pathExtension.lowercased()
+                    if SupportedWallpaperFormats.extensions.contains(ext) {
+                        // Extension-based fallback for files UTType doesn't recognize (e.g., .avif)
+                        accepted = true
+                    }
                 }
-                imageFiles.append(ImageFile(url: fileURL))
+
+                if accepted {
+                    imageFiles.append(ImageFile(url: fileURL))
+                }
             }
 
             print("📷 Found \(imageFiles.count) image files")
@@ -1567,6 +1623,19 @@ public class WallpaperSwitcherViewModel: ObservableObject {
 
     func setCurrentWallpaper(_ wallpaper: ImageFile) {
         currentWallpaper = wallpaper
+    }
+
+    func deleteWallpaper(_ wallpaper: ImageFile) throws {
+        try FileManager.default.removeItem(at: wallpaper.url)
+        wallpapers.removeAll { $0.id == wallpaper.id }
+        colorGroups.removeValue(forKey: wallpaper.url)
+
+        if currentWallpaper?.id == wallpaper.id {
+            currentWallpaper = nil
+        }
+
+        highlightedIndex = nil
+        updateFilteredWallpapers()
     }
 
     /// Move keyboard/selection highlight to `wallpaper` within the current
@@ -1743,6 +1812,7 @@ struct CarouselCardView: View {
     let cardWidth: CGFloat
     let showName: Bool
     let onSelect: () -> Void
+    let onDeleteRequest: () -> Void
 
     @State private var thumbnailImage: Image?
 
@@ -1788,6 +1858,12 @@ struct CarouselCardView: View {
                     )
             }
             .clipShape(RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous))
+            .contextMenu {
+                Button(role: .destructive, action: onDeleteRequest) {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
 
             if showName {
                 Text(wallpaper.name)

@@ -30,4 +30,28 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
 
         XCTAssertEqual(decoded.customScriptPath, "/usr/local/bin/my-script.sh", "customScriptPath should survive encode/decode round-trip")
     }
+
+    func testDeleteWallpaperRemovesFileAndUpdatesCollections() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let fileURL = folder.appendingPathComponent("wallpaper.jpg")
+        try Data([0xFF, 0xD8, 0xFF]).write(to: fileURL)
+        let wallpaper = ImageFile(url: fileURL)
+        let viewModel = WallpaperSwitcherViewModel()
+        viewModel.wallpapers = [wallpaper]
+        viewModel.updateFilteredWallpapers()
+        viewModel.currentWallpaper = wallpaper
+        viewModel.highlightedIndex = 0
+
+        try viewModel.deleteWallpaper(wallpaper)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertTrue(viewModel.wallpapers.isEmpty)
+        XCTAssertTrue(viewModel.filteredWallpapers.isEmpty)
+        XCTAssertNil(viewModel.currentWallpaper)
+        XCTAssertNil(viewModel.highlightedIndex)
+    }
 }
