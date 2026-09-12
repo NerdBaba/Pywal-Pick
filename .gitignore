@@ -11,3 +11,6 @@ DerivedData/
 .netrc
 .worktrees/
 .worktrees/
+.commandcode/
+.devin/
+.omo/

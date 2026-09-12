@@ -25,10 +25,6 @@ final class WallhavenViewModel: ObservableObject {
     @Published var selectedWallpaper: WallhavenWallpaper?
     @Published var showPreview: Bool = false
 
-    @Published var collections: [WallhavenCollection] = []
-    @Published var isLoadingCollections: Bool = false
-    @Published var selectedCollection: WallhavenCollection?
-
     @Published var apiKey: String = ""
 
     private var searchTask: Task<Void, Never>?
@@ -148,7 +144,6 @@ final class WallhavenViewModel: ObservableObject {
             var requestParams = params
             requestParams.query = searchQuery
             requestParams.page = nextPage
-            requestParams.seed = nextPage > 1 ? requestParams.seed : requestParams.seed
             let response = try await api.search(
                 params: requestParams,
                 apiKey: apiKey.isEmpty ? nil : apiKey
@@ -297,42 +292,6 @@ final class WallhavenViewModel: ObservableObject {
     func closePreview() {
         showPreview = false
         selectedWallpaper = nil
-    }
-
-    func loadCollections() async {
-        guard !apiKey.isEmpty else { return }
-
-        isLoadingCollections = true
-        do {
-            collections = try await api.getCollections(apiKey: apiKey)
-        } catch {
-            collections = []
-        }
-        isLoadingCollections = false
-    }
-
-    func loadCollectionWallpapers(_ collection: WallhavenCollection) async {
-        selectedCollection = collection
-        isLoading = true
-        hasError = false
-
-        do {
-            let response = try await api.getCollectionWallpapers(
-                username: "",
-                collectionId: collection.id,
-                apiKey: apiKey.isEmpty ? nil : apiKey
-            )
-
-            results = response.data
-            hasMorePages = response.meta.currentPage < response.meta.lastPage
-            currentPage = response.meta.currentPage
-            totalResults = response.meta.total
-        } catch {
-            hasError = true
-            errorMessage = error.localizedDescription
-        }
-
-        isLoading = false
     }
 
     func clearSearch() {

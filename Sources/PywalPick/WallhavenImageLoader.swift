@@ -56,7 +56,7 @@ actor WallhavenImageLoader {
                 let image = Self.downsampledImage(from: data, maxPixelSize: maxPixelSize)
                 if Task.isCancelled { return nil }
                 if let image {
-                    await self.cache(key: key, image: image, data: data, maxPixelSize: maxPixelSize)
+                    self.cache(key: key, image: image, data: data, maxPixelSize: maxPixelSize)
                 }
                 return image
             } catch {
@@ -75,6 +75,8 @@ actor WallhavenImageLoader {
         inFlight.removeValue(forKey: key)
     }
 
+    private static let maxDiskBytes: Int64 = 500 * 1024 * 1024
+
     private func cache(key: String, image: NSImage, data: Data, maxPixelSize: Int) {
         store(key, image: image)
         let sanitized = key
@@ -90,6 +92,33 @@ actor WallhavenImageLoader {
                   let rep = NSBitmapImageRep(data: tiff),
                   let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
             try? jpeg.write(to: fileURL, options: .atomic)
+        }
+        evictDiskCacheIfNeeded()
+    }
+
+    private func evictDiskCacheIfNeeded() {
+        let fileManager = FileManager.default
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: diskCacheDir,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+            options: .skipsHiddenFiles
+        ) else { return }
+        var entries: [(URL, Int64, Date)] = []
+        var total: Int64 = 0
+        for url in urls {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = values.fileSize,
+                  let date = values.contentModificationDate
+            else { continue }
+            total += Int64(size)
+            entries.append((url, Int64(size), date))
+        }
+        guard total > Self.maxDiskBytes else { return }
+        entries.sort { $0.2 < $1.2 }
+        for (url, size, _) in entries {
+            try? fileManager.removeItem(at: url)
+            total -= size
+            if total <= Self.maxDiskBytes { break }
         }
     }
 

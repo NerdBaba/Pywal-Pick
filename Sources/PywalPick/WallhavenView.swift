@@ -508,22 +508,27 @@ struct WallhavenView: View {
         .focusEffectDisabled(true)
         .onTapGesture { isGridFocused = true }
         .onKeyPress(.leftArrow) {
+            guard gridHandlesKeys else { return .ignored }
             moveHighlight(.left, columns: columns)
             return .handled
         }
         .onKeyPress(.rightArrow) {
+            guard gridHandlesKeys else { return .ignored }
             moveHighlight(.right, columns: columns)
             return .handled
         }
         .onKeyPress(.upArrow) {
+            guard gridHandlesKeys else { return .ignored }
             moveHighlight(.up, columns: columns)
             return .handled
         }
         .onKeyPress(.downArrow) {
+            guard gridHandlesKeys else { return .ignored }
             moveHighlight(.down, columns: columns)
             return .handled
         }
         .onKeyPress(.return) {
+            guard gridHandlesKeys else { return .ignored }
             openHighlighted()
             return .handled
         }
@@ -534,6 +539,10 @@ struct WallhavenView: View {
             }
             return .handled
         }
+    }
+
+    private var gridHandlesKeys: Bool {
+        isGridFocused && !isSearchFocused && !viewModel.showPreview
     }
 }
 
