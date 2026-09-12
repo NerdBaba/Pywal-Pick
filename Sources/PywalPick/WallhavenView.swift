@@ -13,6 +13,20 @@ struct WallhavenView: View {
 
     private let spacing: CGFloat = 12
 
+    private var wallhavenDefaultsKey: String {
+        let config = settingsManager.config
+        return [
+            config.wallhavenDefaultCategories.sorted().joined(separator: ","),
+            config.wallhavenDefaultPurity.sorted().joined(separator: ","),
+            config.wallhavenDefaultSorting,
+            config.wallhavenDefaultOrder,
+            config.wallhavenDefaultTopRange,
+            config.wallhavenDefaultAtLeast,
+            config.wallhavenDefaultRatios.sorted().joined(separator: ","),
+            config.wallhavenDefaultColor
+        ].joined(separator: "|")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             searchHeader
@@ -31,6 +45,9 @@ struct WallhavenView: View {
         }
         .onChange(of: settingsManager.config.wallhavenAPIKey) { _, newKey in
             viewModel.apiKey = newKey
+        }
+        .onChange(of: wallhavenDefaultsKey) { _, _ in
+            Task { await viewModel.refreshDefaults(from: settingsManager.config) }
         }
         .onChange(of: viewModel.currentPage) { _, _ in
             restoreGridFocus()

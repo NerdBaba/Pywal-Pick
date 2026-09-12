@@ -672,10 +672,7 @@ public struct WallpaperSwitcherView: View {
                                 to: settingsManager.config.wallpaperFolderPath
                             ) {
                                 await MainActor.run {
-                                    setWallpaper(imageFile)
-                                }
-                                await MainActor.run {
-                                    wallhavenViewModel.reportSetWallpaper(wallpaper)
+                                    applyWallpaperFromWallhaven(imageFile, wallhaven: wallpaper)
                                 }
                             }
                         }
@@ -957,6 +954,20 @@ public struct WallpaperSwitcherView: View {
         } catch {
             deletionErrorMessage = error.localizedDescription
         }
+    }
+
+    /// Set a wallpaper that was downloaded from Wallhaven: refresh the local
+    /// library, focus the new file in the browser, then run the exact same
+    /// set flow as a normal selection (reselect cycles backend, toast included).
+    private func applyWallpaperFromWallhaven(_ imageFile: ImageFile, wallhaven: WallhavenWallpaper) {
+        if settingsManager.config.wallpaperFolderPath.isEmpty {
+            setWallpaper(imageFile)
+        } else {
+            viewModel.loadWallpapers(from: settingsManager.config.wallpaperFolderPath)
+            focusWallpaperInBrowser(imageFile)
+            setWallpaper(imageFile)
+        }
+        wallhavenViewModel.reportSetWallpaper(wallhaven)
     }
 
     private func setWallpaper(_ wallpaper: ImageFile, backend: WalBackend? = nil) {

@@ -37,7 +37,7 @@ final class WallhavenViewModel: ObservableObject {
     private let downloader = WallhavenDownloader.shared
 
     private var isPrefetching = false
-    private var hasLoadedDefaults = false
+    private var defaultsSignature: String?
 
     init() {
         setupDebounce()
@@ -45,8 +45,18 @@ final class WallhavenViewModel: ObservableObject {
 
     func applyDefaults(from config: AppConfig) {
         apiKey = config.wallhavenAPIKey
-        guard !hasLoadedDefaults else { return }
-        hasLoadedDefaults = true
+        let signature = [
+            config.wallhavenDefaultCategories.sorted().joined(separator: ","),
+            config.wallhavenDefaultPurity.sorted().joined(separator: ","),
+            config.wallhavenDefaultSorting,
+            config.wallhavenDefaultOrder,
+            config.wallhavenDefaultTopRange,
+            config.wallhavenDefaultAtLeast,
+            config.wallhavenDefaultRatios.sorted().joined(separator: ","),
+            config.wallhavenDefaultColor
+        ].joined(separator: "|")
+        guard signature != defaultsSignature else { return }
+        defaultsSignature = signature
         params.categories = Set(config.wallhavenDefaultCategories.compactMap(WallhavenCategory.init(rawValue:)))
         if params.categories.isEmpty { params.categories = [.general, .anime, .people] }
         params.purity = Set(config.wallhavenDefaultPurity.compactMap(WallhavenPurity.init(rawValue:)))
@@ -57,6 +67,17 @@ final class WallhavenViewModel: ObservableObject {
         params.atLeast = config.wallhavenDefaultAtLeast.isEmpty ? nil : config.wallhavenDefaultAtLeast
         params.ratios = config.wallhavenDefaultRatios
         params.color = config.wallhavenDefaultColor.isEmpty ? nil : WallhavenColor(rawValue: config.wallhavenDefaultColor)
+        params.page = 1
+        params.seed = nil
+    }
+
+    /// Re-read defaults (e.g. after Settings changes) and refresh if they changed.
+    func refreshDefaults(from config: AppConfig) async {
+        let before = defaultsSignature
+        applyDefaults(from: config)
+        if before != defaultsSignature {
+            await search()
+        }
     }
 
     private func setupDebounce() {
