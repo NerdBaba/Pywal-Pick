@@ -39,10 +39,14 @@ struct WallhavenView: View {
         }
         .onAppear {
             viewModel.applyDefaults(from: settingsManager.config)
+            viewModel.wallpaperFolderPath = settingsManager.config.wallpaperFolderPath
             if viewModel.results.isEmpty && viewModel.searchQuery.isEmpty {
                 Task { await viewModel.search() }
             }
             restoreGridFocus()
+        }
+        .onChange(of: settingsManager.config.wallpaperFolderPath) { _, newFolder in
+            viewModel.wallpaperFolderPath = newFolder
         }
         .onChange(of: settingsManager.config.wallhavenAPIKey) { _, newKey in
             viewModel.apiKey = newKey
@@ -692,11 +696,11 @@ struct WallhavenThumbnailCard: View {
     }
 
     private func loadFullImage() async {
-        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.path, maxPixelSize: 1024) {
+        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.thumbs.original, maxPixelSize: 1024) {
             fullImage = Image(nsImage: image)
             return
         }
-        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.thumbs.original, maxPixelSize: 1024) {
+        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.thumbs.large, maxPixelSize: 1024) {
             fullImage = Image(nsImage: image)
         }
     }

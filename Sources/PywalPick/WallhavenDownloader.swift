@@ -10,11 +10,18 @@ struct DownloadProgress: Sendable {
     }
 }
 
-final class WallhavenDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    var progressHandler: (@Sendable (DownloadProgress) -> Void)?
+final class WallhavenDownloadState: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    let destinationURL: URL
+    let progressHandler: (@Sendable (DownloadProgress) -> Void)?
     var continuation: CheckedContinuation<URL, Error>?
-    var destinationURL: URL?
-    var wallpaperId: String = ""
+
+    init(
+        destinationURL: URL,
+        progressHandler: (@Sendable (DownloadProgress) -> Void)?
+    ) {
+        self.destinationURL = destinationURL
+        self.progressHandler = progressHandler
+    }
 
     func urlSession(
         _ session: URLSession,
@@ -31,7 +38,7 @@ final class WallhavenDownloadDelegate: NSObject, URLSessionDownloadDelegate, @un
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        guard let continuation, let destinationURL else { return }
+        guard let continuation else { return }
         do {
             try FileManager.default.createDirectory(
                 at: destinationURL.deletingLastPathComponent(),
@@ -49,7 +56,8 @@ final class WallhavenDownloadDelegate: NSObject, URLSessionDownloadDelegate, @un
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error, let continuation {
+        guard let continuation else { return }
+        if let error {
             if (error as NSError).code == NSURLErrorCancelled {
                 continuation.resume(throwing: CancellationError())
             } else {
@@ -64,19 +72,21 @@ final class WallhavenDownloadDelegate: NSObject, URLSessionDownloadDelegate, @un
 final class WallhavenDownloader: @unchecked Sendable {
     static let shared = WallhavenDownloader()
 
-    private let delegate = WallhavenDownloadDelegate()
-    private lazy var session: URLSession = {
+    private var sessions: [String: URLSession] = [:]
+    private var states: [String: WallhavenDownloadState] = [:]
+    private var activeDownloads: [String: URLSessionDownloadTask] = [:]
+
+    private init() {}
+
+    private static func makeSession(delegate: WallhavenDownloadState) -> URLSession {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 120
         config.timeoutIntervalForResource = 300
         config.httpAdditionalHeaders = [
             "User-Agent": "PywalPick/1.0 (macOS wallpaper switcher)"
         ]
-        return URLSession(configuration: config, delegate: self.delegate, delegateQueue: nil)
-    }()
-    private var activeDownloads: [String: URLSessionDownloadTask] = [:]
-
-    private init() {}
+        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+    }
 
     func download(
         wallpaper: WallhavenWallpaper,
@@ -96,22 +106,26 @@ final class WallhavenDownloader: @unchecked Sendable {
 
         cancelDownload(wallpaper.id)
 
+        let state = WallhavenDownloadState(
+            destinationURL: destinationURL,
+            progressHandler: progressHandler
+        )
+        let session = Self.makeSession(delegate: state)
+        sessions[wallpaper.id] = session
+        states[wallpaper.id] = state
+
         do {
             return try await withCheckedThrowingContinuation { continuation in
-                delegate.progressHandler = progressHandler
-                delegate.continuation = continuation
-                delegate.destinationURL = destinationURL
-                delegate.wallpaperId = wallpaper.id
-
-                let task = self.session.downloadTask(with: downloadURL)
+                state.continuation = continuation
+                let task = session.downloadTask(with: downloadURL)
                 self.activeDownloads[wallpaper.id] = task
                 task.resume()
             }
         } catch is CancellationError {
-            activeDownloads.removeValue(forKey: wallpaper.id)
+            cleanupDownload(wallpaper.id)
             throw CancellationError()
         } catch {
-            activeDownloads.removeValue(forKey: wallpaper.id)
+            cleanupDownload(wallpaper.id)
             throw error
         }
     }
@@ -136,16 +150,49 @@ final class WallhavenDownloader: @unchecked Sendable {
         return nil
     }
 
+    func downloadedIds(in folder: String) -> Set<String> {
+        Self.downloadedIdsStatic(in: folder)
+    }
+
+    nonisolated static func downloadedIdsStatic(in folder: String) -> Set<String> {
+        guard !folder.isEmpty else { return [] }
+        let folderURL = URL(fileURLWithPath: folder)
+        let enumerator = FileManager.default.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+        var ids = Set<String>()
+        while let fileURL = enumerator?.nextObject() as? URL {
+            let name = fileURL.lastPathComponent
+            guard name.hasPrefix("wallhaven-") else { continue }
+            let stem = fileURL.deletingPathExtension().lastPathComponent
+            let id = String(stem.dropFirst("wallhaven-".count))
+            if !id.isEmpty { ids.insert(id) }
+        }
+        return ids
+    }
+
     func cancelDownload(_ wallpaperId: String) {
         activeDownloads[wallpaperId]?.cancel()
-        activeDownloads.removeValue(forKey: wallpaperId)
+        cleanupDownload(wallpaperId)
     }
 
     func cancelAllDownloads() {
         for (_, task) in activeDownloads {
             task.cancel()
         }
-        activeDownloads.removeAll()
+        for id in Array(activeDownloads.keys) {
+            cleanupDownload(id)
+        }
+    }
+
+    private func cleanupDownload(_ wallpaperId: String) {
+        activeDownloads.removeValue(forKey: wallpaperId)
+        states.removeValue(forKey: wallpaperId)
+        if let session = sessions.removeValue(forKey: wallpaperId) {
+            session.invalidateAndCancel()
+        }
     }
 
     private func buildDestinationURL(for wallpaper: WallhavenWallpaper, in folder: String) -> URL {

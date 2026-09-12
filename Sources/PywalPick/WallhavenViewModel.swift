@@ -279,13 +279,17 @@ final class WallhavenViewModel: ObservableObject {
         showFeedback("Set \(wallpaper.resolution) wallpaper from Wallhaven")
     }
 
+    private var toastTask: Task<Void, Never>?
+
     private func showFeedback(_ message: String) {
+        toastTask?.cancel()
         toastMessage = message
         showToast = true
-        Task { [weak self] in
+        toastTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_500_000_000)
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             self.showToast = false
+            self.toastTask = nil
         }
     }
 
@@ -317,9 +321,15 @@ final class WallhavenViewModel: ObservableObject {
         totalResults = 0
     }
 
+    @Published var wallpaperFolderPath: String = ""
+
     private func checkDownloadedStatus() async {
-        // This would check against the wallpaper folder
-        // For now, we'll rely on the downloader's isDownloaded method
+        guard !wallpaperFolderPath.isEmpty else { return }
+        let folder = wallpaperFolderPath
+        let known = await Task.detached {
+            WallhavenDownloader.downloadedIdsStatic(in: folder)
+        }.value
+        downloadedIds.formUnion(known)
     }
 
     func markAsDownloaded(_ wallpaperId: String) {
