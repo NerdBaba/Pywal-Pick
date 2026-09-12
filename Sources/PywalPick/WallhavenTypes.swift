@@ -214,28 +214,6 @@ enum WallhavenSorting: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-enum WallhavenRelevanceSorting: String, CaseIterable, Sendable, Identifiable {
-    case relevance = "relevance"
-    case dateAdded = "date_added"
-    case random = "random"
-    case views = "views"
-    case favorites = "favorites"
-    case toplist = "toplist"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .relevance: return "Relevance"
-        case .dateAdded: return "Date Added"
-        case .random: return "Random"
-        case .views: return "Views"
-        case .favorites: return "Favorites"
-        case .toplist: return "Toplist"
-        }
-    }
-}
-
 enum WallhavenToplistRange: String, CaseIterable, Sendable, Identifiable {
     case oneDay = "1d"
     case threeDays = "3d"
@@ -350,7 +328,6 @@ struct WallhavenSearchParams: Sendable {
     var color: WallhavenColor? = nil
     var page: Int = 1
     var seed: String? = nil
-    var relevanceSorting: WallhavenRelevanceSorting? = nil
 
     func buildQueryItems() -> [URLQueryItem] {
         var items: [URLQueryItem] = []
@@ -390,10 +367,6 @@ struct WallhavenSearchParams: Sendable {
 
         if !ratios.isEmpty {
             items.append(URLQueryItem(name: "ratios", value: ratios.joined(separator: ",")))
-        }
-
-        if let relevanceSorting {
-            items.append(URLQueryItem(name: "sorting", value: relevanceSorting.rawValue))
         }
 
         if let color {

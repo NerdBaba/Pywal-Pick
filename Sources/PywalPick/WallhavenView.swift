@@ -36,7 +36,9 @@ struct WallhavenView: View {
             return .handled
         }
         .onKeyPress(.rightArrow) {
-            highlightedIndex += 1
+            if highlightedIndex < viewModel.results.count - 1 {
+                highlightedIndex += 1
+            }
             return .handled
         }
         .onKeyPress(.return) {
@@ -281,12 +283,12 @@ struct WallhavenView: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                     HStack(spacing: 6) {
-                        ForEach(WallhavenRelevanceSorting.allCases) { sorting in
+                        ForEach(WallhavenSorting.allCases) { sorting in
                             Toggle(isOn: Binding(
-                                get: { viewModel.params.relevanceSorting == sorting },
+                                get: { viewModel.params.sorting == sorting },
                                 set: { enabled in
                                     if enabled {
-                                        viewModel.setRelevanceSorting(sorting)
+                                        viewModel.setSorting(sorting)
                                     }
                                 }
                             )) {
@@ -414,7 +416,6 @@ struct WallhavenThumbnailCard: View {
     @State private var thumbnailImage: Image?
     @State private var fullImage: Image?
     @State private var isHovered = false
-    @State private var isFetchingFull = false
 
     var body: some View {
         ZStack {
@@ -507,6 +508,9 @@ struct WallhavenThumbnailCard: View {
                 Task { await loadFullImage() }
             }
         }
+        .onDisappear {
+            fullImage = nil
+        }
         .contextMenu {
             Button("Preview", systemImage: "eye") { onTap() }
             Button("Download", systemImage: "arrow.down.circle") { onDownload() }
@@ -538,9 +542,6 @@ struct WallhavenThumbnailCard: View {
     }
 
     private func loadFullImage() async {
-        isFetchingFull = true
-        defer { isFetchingFull = false }
-
         guard let url = URL(string: wallpaper.thumbs.original) else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
