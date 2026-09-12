@@ -12,6 +12,7 @@ final class WallhavenViewModel: ObservableObject {
     @Published var hasMorePages: Bool = false
     @Published var currentPage: Int = 1
     @Published var totalResults: Int = 0
+    @Published var isLoadingMore = false
 
     @Published var params = WallhavenSearchParams()
     @Published var showFilters: Bool = false
@@ -35,21 +36,45 @@ final class WallhavenViewModel: ObservableObject {
     private let api = WallhavenAPI.shared
     private let downloader = WallhavenDownloader.shared
 
+    private var isPrefetching = false
+    private var hasLoadedDefaults = false
+
     init() {
         setupDebounce()
+    }
+
+    func applyDefaults(from config: AppConfig) {
+        apiKey = config.wallhavenAPIKey
+        guard !hasLoadedDefaults else { return }
+        hasLoadedDefaults = true
+        params.categories = Set(config.wallhavenDefaultCategories.compactMap(WallhavenCategory.init(rawValue:)))
+        if params.categories.isEmpty { params.categories = [.general, .anime, .people] }
+        params.purity = Set(config.wallhavenDefaultPurity.compactMap(WallhavenPurity.init(rawValue:)))
+        if params.purity.isEmpty { params.purity = [.sfw] }
+        params.sorting = WallhavenSorting(rawValue: config.wallhavenDefaultSorting) ?? .dateAdded
+        params.order = config.wallhavenDefaultOrder.isEmpty ? "desc" : config.wallhavenDefaultOrder
+        params.topRange = WallhavenToplistRange(rawValue: config.wallhavenDefaultTopRange) ?? .oneMonth
+        params.atLeast = config.wallhavenDefaultAtLeast.isEmpty ? nil : config.wallhavenDefaultAtLeast
+        params.ratios = config.wallhavenDefaultRatios
+        params.color = config.wallhavenDefaultColor.isEmpty ? nil : WallhavenColor(rawValue: config.wallhavenDefaultColor)
     }
 
     private func setupDebounce() {
         $searchQuery
             .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
             .removeDuplicates()
-            .sink { [weak self] query in
+            .sink { [weak self] _ in
                 guard let self else { return }
-                if !query.isEmpty {
-                    Task { await self.search() }
-                }
+                Task { await self.search() }
             }
             .store(in: &cancellables)
+    }
+
+    private func resetPaginationLocked() {
+        currentPage = 1
+        params.page = 1
+        hasMorePages = false
+        isPrefetching = false
     }
 
     func search() async {
@@ -57,13 +82,16 @@ final class WallhavenViewModel: ObservableObject {
 
         searchTask = Task {
             isLoading = true
+            isLoadingMore = false
             hasError = false
-            currentPage = 1
+            resetPaginationLocked()
 
             do {
-                params.query = searchQuery
+                var requestParams = params
+                requestParams.query = searchQuery
+                requestParams.page = 1
                 let response = try await api.search(
-                    params: params,
+                    params: requestParams,
                     apiKey: apiKey.isEmpty ? nil : apiKey
                 )
 
@@ -82,44 +110,67 @@ final class WallhavenViewModel: ObservableObject {
             }
 
             isLoading = false
+            isLoadingMore = false
         }
+
+        await searchTask?.value
     }
 
     func loadNextPage() async {
-        guard hasMorePages && !isLoading else { return }
+        guard hasMorePages, !isPrefetching else { return }
 
-        isLoading = true
-        currentPage += 1
-        params.page = currentPage
+        isPrefetching = true
+        isLoadingMore = true
+        let nextPage = currentPage + 1
 
         do {
+            var requestParams = params
+            requestParams.query = searchQuery
+            requestParams.page = nextPage
+            requestParams.seed = nextPage > 1 ? requestParams.seed : requestParams.seed
             let response = try await api.search(
-                params: params,
+                params: requestParams,
                 apiKey: apiKey.isEmpty ? nil : apiKey
             )
 
             if Task.isCancelled { return }
 
-            results.append(contentsOf: response.data)
+            if nextPage > 1, let seed = response.meta.seed, !seed.isEmpty, requestParams.seed == nil {
+                params.seed = seed
+            }
+            var seen = Set(results.map(\.id))
+            let fresh = response.data.filter { seen.insert($0.id).inserted }
+            results.append(contentsOf: fresh)
+            currentPage = response.meta.currentPage
+            params.page = currentPage
             hasMorePages = response.meta.currentPage < response.meta.lastPage
 
             await checkDownloadedStatus()
         } catch {
-            currentPage -= 1
             hasError = true
             errorMessage = error.localizedDescription
         }
 
-        isLoading = false
+        isPrefetching = false
+        isLoadingMore = false
     }
 
     func refresh() async {
         await search()
     }
 
+    private func applyFilterChange() {
+        searchTask?.cancel()
+        currentPage = 1
+        params.page = 1
+        params.seed = nil
+        Task { await search() }
+    }
+
     func setSorting(_ sorting: WallhavenSorting) {
         params.sorting = sorting
-        Task { await search() }
+        if sorting != .random { params.seed = nil }
+        applyFilterChange()
     }
 
     func togglePurity(_ purity: WallhavenPurity) {
@@ -128,7 +179,7 @@ final class WallhavenViewModel: ObservableObject {
         } else {
             params.purity.insert(purity)
         }
-        Task { await search() }
+        applyFilterChange()
     }
 
     func toggleCategory(_ category: WallhavenCategory) {
@@ -137,17 +188,22 @@ final class WallhavenViewModel: ObservableObject {
         } else {
             params.categories.insert(category)
         }
-        Task { await search() }
+        applyFilterChange()
     }
 
     func setColor(_ color: WallhavenColor?) {
         params.color = color
-        Task { await search() }
+        applyFilterChange()
     }
 
     func setAtLeast(_ resolution: String?) {
         params.atLeast = resolution
-        Task { await search() }
+        applyFilterChange()
+    }
+
+    func setTopRange(_ range: WallhavenToplistRange) {
+        params.topRange = range
+        applyFilterChange()
     }
 
     func toggleRatio(_ ratio: WallhavenRatio) {
@@ -156,7 +212,12 @@ final class WallhavenViewModel: ObservableObject {
         } else {
             params.ratios.append(ratio.ratioString)
         }
-        Task { await search() }
+        applyFilterChange()
+    }
+
+    func setCategories(_ categories: Set<WallhavenCategory>) {
+        params.categories = categories
+        applyFilterChange()
     }
 
     func download(_ wallpaper: WallhavenWallpaper, to folder: String) async -> URL? {

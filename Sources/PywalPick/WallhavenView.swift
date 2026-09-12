@@ -7,6 +7,8 @@ struct WallhavenView: View {
     @State private var columns = 4
     @State private var showColorPicker = false
     @State private var highlightedIndex: Int = -1
+    @State private var scrollToID: String?
+    @FocusState private var isSearchFocused: Bool
     @FocusState private var isGridFocused: Bool
 
     private let spacing: CGFloat = 12
@@ -21,16 +23,17 @@ struct WallhavenView: View {
             }
         }
         .onAppear {
-            viewModel.apiKey = settingsManager.config.wallhavenAPIKey
+            viewModel.applyDefaults(from: settingsManager.config)
             if viewModel.results.isEmpty && viewModel.searchQuery.isEmpty {
                 Task { await viewModel.search() }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                isGridFocused = true
-                if highlightedIndex == -1 && !viewModel.results.isEmpty {
-                    highlightedIndex = 0
-                }
-            }
+            restoreGridFocus()
+        }
+        .onChange(of: settingsManager.config.wallhavenAPIKey) { _, newKey in
+            viewModel.apiKey = newKey
+        }
+        .onChange(of: viewModel.currentPage) { _, _ in
+            restoreGridFocus()
         }
         .onChange(of: viewModel.results.count) { _, _ in
             if highlightedIndex == -1 && !viewModel.results.isEmpty {
@@ -40,9 +43,18 @@ struct WallhavenView: View {
         }
         .onKeyPress(characters: CharacterSet(charactersIn: "f"), phases: .down) { press in
             if press.modifiers.contains(.command) {
+                isSearchFocused = true
                 return .handled
             }
             return .ignored
+        }
+    }
+
+    private func restoreGridFocus() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            if !viewModel.showPreview {
+                isGridFocused = true
+            }
         }
     }
 
@@ -68,6 +80,7 @@ struct WallhavenView: View {
     private func moveHighlight(_ direction: NavigationDirection, columns: Int) {
         let count = viewModel.results.count
         guard count > 0 else { return }
+        guard columns > 0 else { return }
         let current = highlightedIndex < 0 ? 0 : highlightedIndex
         let next: Int
         switch direction {
@@ -78,9 +91,15 @@ struct WallhavenView: View {
         case .up:
             next = max(0, current - columns)
         case .down:
+            if current + columns >= count, viewModel.hasMorePages {
+                Task { await viewModel.loadNextPage() }
+            }
             next = min(count - 1, current + columns)
         }
         highlightedIndex = next
+        if next < viewModel.results.count {
+            scrollToID = viewModel.results[next].id
+        }
     }
 
     private func openHighlighted() {
@@ -94,8 +113,12 @@ struct WallhavenView: View {
                 HStack {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
-                    TextField("Search wallhaven.cc…", text: $viewModel.searchQuery)
+                    TextField("Search wallhaven.cc…  (⌘F to focus)", text: $viewModel.searchQuery)
                         .textFieldStyle(.plain)
+                        .focused($isSearchFocused)
+                        .onSubmit {
+                            Task { await viewModel.search() }
+                        }
                     if !viewModel.searchQuery.isEmpty {
                         Button {
                             viewModel.clearSearch()
@@ -155,9 +178,9 @@ struct WallhavenView: View {
                             Toggle(isOn: Binding(
                                 get: { viewModel.params.categories.contains(category) },
                                 set: { enabled in
-                                    viewModel.params.categories = enabled
-                                        ? viewModel.params.categories.union([category])
-                                        : viewModel.params.categories.subtracting([category])
+                                    var next = viewModel.params.categories
+                                    if enabled { next.insert(category) } else { next.remove(category) }
+                                    viewModel.setCategories(next)
                                 }
                             )) {
                                 Label(category.displayName, systemImage: category.icon)
@@ -206,8 +229,7 @@ struct WallhavenView: View {
                                     get: { viewModel.params.topRange == range },
                                     set: { enabled in
                                         if enabled {
-                                            viewModel.params.topRange = range
-                                            Task { await viewModel.search() }
+                                            viewModel.setTopRange(range)
                                         }
                                     }
                                 )) {
@@ -388,11 +410,12 @@ struct WallhavenView: View {
     }
 
     private var resultsGrid: some View {
-        ScrollView {
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columns),
-                spacing: spacing
-            ) {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columns),
+                    spacing: spacing
+                ) {
                 ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, wallpaper in
                     WallhavenThumbnailCard(
                         wallpaper: wallpaper,
@@ -421,20 +444,44 @@ struct WallhavenView: View {
                             }
                         }
                     )
+                    .id(wallpaper.id)
                 }
 
                 if viewModel.hasMorePages {
-                    ProgressView()
-                        .frame(height: 40)
-                        .onAppear {
-                            Task { await viewModel.loadNextPage() }
+                    HStack(spacing: 8) {
+                        if viewModel.isLoadingMore {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Loading more…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button("Load more (\(viewModel.totalResults - viewModel.results.count) remaining)") {
+                                Task { await viewModel.loadNextPage() }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .onAppear {
+                        Task { await viewModel.loadNextPage() }
+                    }
                 }
             }
             .padding(spacing)
             .overlay {
                 if viewModel.isLoading && viewModel.results.isEmpty {
                     ProgressView()
+                }
+            }
+            }
+            .onChange(of: scrollToID) { _, id in
+                if let id {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        proxy.scrollTo(id, anchor: .center)
+                    }
                 }
             }
         }
@@ -466,6 +513,7 @@ struct WallhavenView: View {
         .onKeyPress(.escape) {
             if viewModel.showPreview {
                 viewModel.closePreview()
+                restoreGridFocus()
             }
             return .handled
         }
@@ -611,37 +659,19 @@ struct WallhavenThumbnailCard: View {
     }
 
     private func loadThumbnail() async {
-        guard let url = URL(string: wallpaper.thumbs.large) else { return }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let nsImage = NSImage(data: data) {
-                await MainActor.run {
-                    thumbnailImage = Image(nsImage: nsImage)
-                }
-            }
-        } catch { }
+        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.thumbs.large, maxPixelSize: 512) {
+            thumbnailImage = Image(nsImage: image)
+        }
     }
 
     private func loadFullImage() async {
-        guard let url = URL(string: wallpaper.path) else { return }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let nsImage = NSImage(data: data) {
-                await MainActor.run {
-                    fullImage = Image(nsImage: nsImage)
-                }
-                return
-            }
-        } catch { }
-        guard let fallbackURL = URL(string: wallpaper.thumbs.original) else { return }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: fallbackURL)
-            if let nsImage = NSImage(data: data) {
-                await MainActor.run {
-                    fullImage = Image(nsImage: nsImage)
-                }
-            }
-        } catch { }
+        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.path, maxPixelSize: 1024) {
+            fullImage = Image(nsImage: image)
+            return
+        }
+        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.thumbs.original, maxPixelSize: 1024) {
+            fullImage = Image(nsImage: image)
+        }
     }
 }
 
@@ -750,52 +780,19 @@ struct WallhavenPreviewView: View {
     }
 
     private func loadPreviewImage() async {
-        guard let url = URL(string: wallpaper.path) else {
-            await loadFallbackPreview()
+        let loader = WallhavenImageLoader.shared
+        let width = Int(NSScreen.main?.frame.width ?? 1920)
+        let target = min(max(width, 1024), 2560)
+        if let image = await loader.load(urlString: wallpaper.path, maxPixelSize: target) {
+            previewImage = Image(nsImage: image)
             return
         }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let nsImage = NSImage(data: data) {
-                await MainActor.run {
-                    previewImage = Image(nsImage: nsImage)
-                }
-                return
-            }
-        } catch { }
-        await loadFallbackPreview()
-    }
-
-    private func loadFallbackPreview() async {
-        guard let url = URL(string: wallpaper.thumbs.original) else {
-            guard let fallbackURL = URL(string: wallpaper.thumbs.large) else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: fallbackURL)
-                if let nsImage = NSImage(data: data) {
-                    await MainActor.run {
-                        previewImage = Image(nsImage: nsImage)
-                    }
-                }
-            } catch { }
+        if let image = await loader.load(urlString: wallpaper.thumbs.original, maxPixelSize: target) {
+            previewImage = Image(nsImage: image)
             return
         }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let nsImage = NSImage(data: data) {
-                await MainActor.run {
-                    previewImage = Image(nsImage: nsImage)
-                }
-            }
-        } catch {
-            guard let fallbackURL = URL(string: wallpaper.thumbs.large) else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: fallbackURL)
-                if let nsImage = NSImage(data: data) {
-                    await MainActor.run {
-                        previewImage = Image(nsImage: nsImage)
-                    }
-                }
-            } catch { }
+        if let image = await loader.load(urlString: wallpaper.thumbs.large, maxPixelSize: 1024) {
+            previewImage = Image(nsImage: image)
         }
     }
 

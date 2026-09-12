@@ -371,6 +371,117 @@ public struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .uiSettingsSection()
+
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Wallhaven Default Filters", systemImage: "line.3.horizontal.decrease.circle")
+                        .font(UIStyle.sectionTitle)
+
+                    Text("Applied every time you open the Wallhaven browser.")
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: UIStyle.spaceSM) {
+                        ForEach(WallhavenCategory.allCases) { category in
+                            Toggle(isOn: Binding(
+                                get: { settingsManager.config.wallhavenDefaultCategories.contains(category.rawValue) },
+                                set: { enabled in
+                                    var set = Set(settingsManager.config.wallhavenDefaultCategories)
+                                    if enabled { set.insert(category.rawValue) } else { set.remove(category.rawValue) }
+                                    settingsManager.config.wallhavenDefaultCategories = Array(set)
+                                }
+                            )) {
+                                Text(category.displayName)
+                            }
+                            .toggleStyle(.button)
+                            .controlSize(.small)
+                        }
+                    }
+
+                    HStack(spacing: UIStyle.spaceSM) {
+                        ForEach(WallhavenPurity.allCases) { purity in
+                            Toggle(isOn: Binding(
+                                get: { settingsManager.config.wallhavenDefaultPurity.contains(purity.rawValue) },
+                                set: { enabled in
+                                    var set = Set(settingsManager.config.wallhavenDefaultPurity)
+                                    if enabled { set.insert(purity.rawValue) } else { set.remove(purity.rawValue) }
+                                    settingsManager.config.wallhavenDefaultPurity = Array(set)
+                                }
+                            )) {
+                                Text(purity.displayName)
+                            }
+                            .toggleStyle(.button)
+                            .controlSize(.small)
+                        }
+                    }
+
+                    HStack(spacing: UIStyle.spaceMD) {
+                        Picker("Sort", selection: $settingsManager.config.wallhavenDefaultSorting) {
+                            ForEach(WallhavenSorting.allCases) { sorting in
+                                Text(sorting.displayName).tag(sorting.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+
+                        Picker("Order", selection: $settingsManager.config.wallhavenDefaultOrder) {
+                            Text("Descending").tag("desc")
+                            Text("Ascending").tag("asc")
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+
+                        Picker("Toplist", selection: $settingsManager.config.wallhavenDefaultTopRange) {
+                            ForEach(WallhavenToplistRange.allCases) { range in
+                                Text(range.displayName).tag(range.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+
+                    HStack(spacing: UIStyle.spaceMD) {
+                        Picker("Min resolution", selection: $settingsManager.config.wallhavenDefaultAtLeast) {
+                            Text("Any").tag("")
+                            Text("1920x1080").tag("1920x1080")
+                            Text("2560x1440").tag("2560x1440")
+                            Text("3840x2160").tag("3840x2160")
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+
+                        Picker("Color", selection: $settingsManager.config.wallhavenDefaultColor) {
+                            Text("Any").tag("")
+                            ForEach(WallhavenColor.allCases) { color in
+                                Text(color.displayName).tag(color.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+
+                    HStack(spacing: UIStyle.spaceSM) {
+                        ForEach(WallhavenRatio.allCases) { ratio in
+                            Toggle(isOn: Binding(
+                                get: { settingsManager.config.wallhavenDefaultRatios.contains(ratio.rawValue) },
+                                set: { enabled in
+                                    var list = settingsManager.config.wallhavenDefaultRatios
+                                    if enabled {
+                                        if !list.contains(ratio.rawValue) { list.append(ratio.rawValue) }
+                                    } else {
+                                        list.removeAll { $0 == ratio.rawValue }
+                                    }
+                                    settingsManager.config.wallhavenDefaultRatios = list
+                                }
+                            )) {
+                                Text(ratio.displayName)
+                                    .font(.caption.monospaced())
+                            }
+                            .toggleStyle(.button)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+                .uiSettingsSection()
             }
             .padding(.vertical, UIStyle.spaceMD)
         }

@@ -130,6 +130,14 @@ public struct AppConfig: Codable, Sendable {
     public var transitionFPS: Int
     public var showWallpaperNames: Bool
     public var wallhavenAPIKey: String
+    public var wallhavenDefaultCategories: [String]
+    public var wallhavenDefaultPurity: [String]
+    public var wallhavenDefaultSorting: String
+    public var wallhavenDefaultOrder: String
+    public var wallhavenDefaultTopRange: String
+    public var wallhavenDefaultAtLeast: String
+    public var wallhavenDefaultRatios: [String]
+    public var wallhavenDefaultColor: String
 
     public static let `default` = AppConfig(
         wallpaperFolderPath: "",
@@ -147,7 +155,15 @@ public struct AppConfig: Codable, Sendable {
         transitionDuration: 1.0,
         transitionFPS: 60,
         showWallpaperNames: true,
-        wallhavenAPIKey: ""
+        wallhavenAPIKey: "",
+        wallhavenDefaultCategories: ["general", "anime", "people"],
+        wallhavenDefaultPurity: ["sfw"],
+        wallhavenDefaultSorting: "date_added",
+        wallhavenDefaultOrder: "desc",
+        wallhavenDefaultTopRange: "1M",
+        wallhavenDefaultAtLeast: "",
+        wallhavenDefaultRatios: [],
+        wallhavenDefaultColor: ""
     )
 
     private static let configURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/PywalPick/config.json")
@@ -168,7 +184,15 @@ public struct AppConfig: Codable, Sendable {
         transitionDuration: Double,
         transitionFPS: Int,
         showWallpaperNames: Bool,
-        wallhavenAPIKey: String = ""
+        wallhavenAPIKey: String = "",
+        wallhavenDefaultCategories: [String] = ["general", "anime", "people"],
+        wallhavenDefaultPurity: [String] = ["sfw"],
+        wallhavenDefaultSorting: String = "date_added",
+        wallhavenDefaultOrder: String = "desc",
+        wallhavenDefaultTopRange: String = "1M",
+        wallhavenDefaultAtLeast: String = "",
+        wallhavenDefaultRatios: [String] = [],
+        wallhavenDefaultColor: String = ""
     ) {
         self.wallpaperFolderPath = wallpaperFolderPath
         self.dummyWallpaperFile = dummyWallpaperFile
@@ -186,6 +210,14 @@ public struct AppConfig: Codable, Sendable {
         self.transitionFPS = transitionFPS
         self.showWallpaperNames = showWallpaperNames
         self.wallhavenAPIKey = wallhavenAPIKey
+        self.wallhavenDefaultCategories = wallhavenDefaultCategories
+        self.wallhavenDefaultPurity = wallhavenDefaultPurity
+        self.wallhavenDefaultSorting = wallhavenDefaultSorting
+        self.wallhavenDefaultOrder = wallhavenDefaultOrder
+        self.wallhavenDefaultTopRange = wallhavenDefaultTopRange
+        self.wallhavenDefaultAtLeast = wallhavenDefaultAtLeast
+        self.wallhavenDefaultRatios = wallhavenDefaultRatios
+        self.wallhavenDefaultColor = wallhavenDefaultColor
     }
 
     public init(from decoder: Decoder) throws {
@@ -207,6 +239,14 @@ public struct AppConfig: Codable, Sendable {
         transitionFPS = try c.decodeIfPresent(Int.self, forKey: .transitionFPS) ?? d.transitionFPS
         showWallpaperNames = try c.decodeIfPresent(Bool.self, forKey: .showWallpaperNames) ?? true
         wallhavenAPIKey = try c.decodeIfPresent(String.self, forKey: .wallhavenAPIKey) ?? ""
+        wallhavenDefaultCategories = try c.decodeIfPresent([String].self, forKey: .wallhavenDefaultCategories) ?? d.wallhavenDefaultCategories
+        wallhavenDefaultPurity = try c.decodeIfPresent([String].self, forKey: .wallhavenDefaultPurity) ?? d.wallhavenDefaultPurity
+        wallhavenDefaultSorting = try c.decodeIfPresent(String.self, forKey: .wallhavenDefaultSorting) ?? d.wallhavenDefaultSorting
+        wallhavenDefaultOrder = try c.decodeIfPresent(String.self, forKey: .wallhavenDefaultOrder) ?? d.wallhavenDefaultOrder
+        wallhavenDefaultTopRange = try c.decodeIfPresent(String.self, forKey: .wallhavenDefaultTopRange) ?? d.wallhavenDefaultTopRange
+        wallhavenDefaultAtLeast = try c.decodeIfPresent(String.self, forKey: .wallhavenDefaultAtLeast) ?? d.wallhavenDefaultAtLeast
+        wallhavenDefaultRatios = try c.decodeIfPresent([String].self, forKey: .wallhavenDefaultRatios) ?? d.wallhavenDefaultRatios
+        wallhavenDefaultColor = try c.decodeIfPresent(String.self, forKey: .wallhavenDefaultColor) ?? d.wallhavenDefaultColor
     }
 
     public static func load() -> AppConfig {
