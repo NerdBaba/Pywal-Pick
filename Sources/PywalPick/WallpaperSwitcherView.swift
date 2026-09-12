@@ -674,6 +674,9 @@ public struct WallpaperSwitcherView: View {
                                 await MainActor.run {
                                     setWallpaper(imageFile)
                                 }
+                                await MainActor.run {
+                                    wallhavenViewModel.reportSetWallpaper(wallpaper)
+                                }
                             }
                         }
                     },

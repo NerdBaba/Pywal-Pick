@@ -18,6 +18,8 @@ final class WallhavenViewModel: ObservableObject {
 
     @Published var downloadProgress: [String: Double] = [:]
     @Published var downloadedIds: Set<String> = []
+    @Published var toastMessage: String?
+    @Published var showToast = false
 
     @Published var selectedWallpaper: WallhavenWallpaper?
     @Published var showPreview: Bool = false
@@ -172,12 +174,26 @@ final class WallhavenViewModel: ObservableObject {
 
             downloadedIds.insert(wallpaper.id)
             downloadProgress.removeValue(forKey: wallpaper.id)
+            showFeedback("Downloaded wallhaven-\(wallpaper.id).\(wallpaper.fileExtension)")
             return url
         } catch {
             downloadProgress.removeValue(forKey: wallpaper.id)
-            hasError = true
-            errorMessage = "Download failed: \(error.localizedDescription)"
+            showFeedback("Download failed: \(error.localizedDescription)")
             return nil
+        }
+    }
+
+    func reportSetWallpaper(_ wallpaper: WallhavenWallpaper) {
+        showFeedback("Set \(wallpaper.resolution) wallpaper from Wallhaven")
+    }
+
+    private func showFeedback(_ message: String) {
+        toastMessage = message
+        showToast = true
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard let self else { return }
+            self.showToast = false
         }
     }
 

@@ -7,6 +7,7 @@ struct WallhavenView: View {
     @State private var columns = 4
     @State private var showColorPicker = false
     @State private var highlightedIndex: Int = -1
+    @FocusState private var isGridFocused: Bool
 
     private let spacing: CGFloat = 12
 
@@ -15,47 +16,76 @@ struct WallhavenView: View {
             searchHeader
             Divider().opacity(0.45)
             contentArea
+            if viewModel.showToast, let message = viewModel.toastMessage {
+                toastBanner(message)
+            }
         }
         .onAppear {
             viewModel.apiKey = settingsManager.config.wallhavenAPIKey
             if viewModel.results.isEmpty && viewModel.searchQuery.isEmpty {
                 Task { await viewModel.search() }
             }
-        }
-        .onKeyPress(.downArrow) {
-            Task { await viewModel.loadNextPage() }
-            return .handled
-        }
-        .onKeyPress(.upArrow) {
-            return .handled
-        }
-        .onKeyPress(.leftArrow) {
-            if highlightedIndex > 0 {
-                highlightedIndex -= 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                isGridFocused = true
+                if highlightedIndex == -1 && !viewModel.results.isEmpty {
+                    highlightedIndex = 0
+                }
             }
-            return .handled
         }
-        .onKeyPress(.rightArrow) {
-            if highlightedIndex < viewModel.results.count - 1 {
-                highlightedIndex += 1
+        .onChange(of: viewModel.results.count) { _, _ in
+            if highlightedIndex == -1 && !viewModel.results.isEmpty {
+                highlightedIndex = 0
             }
-            return .handled
+            highlightedIndex = min(highlightedIndex, max(viewModel.results.count - 1, 0))
         }
-        .onKeyPress(.return) {
-            if highlightedIndex >= 0 && highlightedIndex < viewModel.results.count {
-                viewModel.preview(viewModel.results[highlightedIndex])
+        .onKeyPress(characters: CharacterSet(charactersIn: "f"), phases: .down) { press in
+            if press.modifiers.contains(.command) {
+                return .handled
             }
-            return .handled
+            return .ignored
         }
-        .onKeyPress(.escape) {
-            if viewModel.showPreview {
-                viewModel.closePreview()
-            }
-            return .handled
+    }
+
+    private func toastBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Text(message)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
         }
-        .onKeyPress("/") {
-            return .handled
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(.primary.opacity(0.1), lineWidth: 1)
+        )
+        .padding(.bottom, 12)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private func moveHighlight(_ direction: NavigationDirection, columns: Int) {
+        let count = viewModel.results.count
+        guard count > 0 else { return }
+        let current = highlightedIndex < 0 ? 0 : highlightedIndex
+        let next: Int
+        switch direction {
+        case .left:
+            next = max(0, current - 1)
+        case .right:
+            next = min(count - 1, current + 1)
+        case .up:
+            next = max(0, current - columns)
+        case .down:
+            next = min(count - 1, current + columns)
         }
+        highlightedIndex = next
+    }
+
+    private func openHighlighted() {
+        guard highlightedIndex >= 0, highlightedIndex < viewModel.results.count else { return }
+        viewModel.preview(viewModel.results[highlightedIndex])
     }
 
     private var searchHeader: some View {
@@ -363,18 +393,24 @@ struct WallhavenView: View {
                 columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columns),
                 spacing: spacing
             ) {
-                ForEach(viewModel.results) { wallpaper in
+                ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, wallpaper in
                     WallhavenThumbnailCard(
                         wallpaper: wallpaper,
                         isDownloaded: viewModel.downloadedIds.contains(wallpaper.id),
                         downloadProgress: viewModel.downloadProgress[wallpaper.id],
-                        onTap: { viewModel.preview(wallpaper) },
+                        isHighlighted: index == highlightedIndex,
+                        onTap: {
+                            highlightedIndex = index
+                            viewModel.preview(wallpaper)
+                        },
                         onDownload: {
+                            highlightedIndex = index
                             Task {
                                 _ = await viewModel.download(wallpaper, to: settingsManager.config.wallpaperFolderPath)
                             }
                         },
                         onSetWallpaper: {
+                            highlightedIndex = index
                             Task {
                                 if let _ = await viewModel.downloadAndSet(
                                     wallpaper,
@@ -402,6 +438,37 @@ struct WallhavenView: View {
                 }
             }
         }
+        .contentShape(Rectangle())
+        .focusable()
+        .focused($isGridFocused)
+        .focusEffectDisabled(true)
+        .onTapGesture { isGridFocused = true }
+        .onKeyPress(.leftArrow) {
+            moveHighlight(.left, columns: columns)
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            moveHighlight(.right, columns: columns)
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            moveHighlight(.up, columns: columns)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            moveHighlight(.down, columns: columns)
+            return .handled
+        }
+        .onKeyPress(.return) {
+            openHighlighted()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            if viewModel.showPreview {
+                viewModel.closePreview()
+            }
+            return .handled
+        }
     }
 }
 
@@ -409,6 +476,7 @@ struct WallhavenThumbnailCard: View {
     let wallpaper: WallhavenWallpaper
     let isDownloaded: Bool
     let downloadProgress: Double?
+    let isHighlighted: Bool
     let onTap: () -> Void
     let onDownload: () -> Void
     let onSetWallpaper: () -> Void
@@ -416,6 +484,8 @@ struct WallhavenThumbnailCard: View {
     @State private var thumbnailImage: Image?
     @State private var fullImage: Image?
     @State private var isHovered = false
+
+    var showActions: Bool { isHovered || isHighlighted }
 
     var body: some View {
         ZStack {
@@ -440,7 +510,7 @@ struct WallhavenThumbnailCard: View {
                     .controlSize(.small)
             }
 
-            if isHovered {
+            if showActions {
                 Color.black.opacity(0.3)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
 
@@ -451,6 +521,7 @@ struct WallhavenThumbnailCard: View {
                             .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut("d", modifiers: [])
 
                     Button(action: onSetWallpaper) {
                         Image(systemName: "photo")
@@ -458,6 +529,7 @@ struct WallhavenThumbnailCard: View {
                             .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut("s", modifiers: [])
                 }
             }
 
@@ -486,7 +558,7 @@ struct WallhavenThumbnailCard: View {
                 }
             }
 
-            if isDownloaded && !isHovered {
+            if isDownloaded && !showActions {
                 VStack {
                     HStack {
                         Spacer()
@@ -499,12 +571,21 @@ struct WallhavenThumbnailCard: View {
                 .padding(6)
             }
         }
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isHighlighted ? Color.accentColor : Color.clear, lineWidth: 3)
+        )
         .onTapGesture(perform: onTap)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
             if hovering && fullImage == nil {
+                Task { await loadFullImage() }
+            }
+        }
+        .onChange(of: isHighlighted) { _, highlighted in
+            if highlighted && fullImage == nil {
                 Task { await loadFullImage() }
             }
         }
@@ -542,25 +623,25 @@ struct WallhavenThumbnailCard: View {
     }
 
     private func loadFullImage() async {
-        guard let url = URL(string: wallpaper.thumbs.original) else { return }
+        guard let url = URL(string: wallpaper.path) else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             if let nsImage = NSImage(data: data) {
                 await MainActor.run {
                     fullImage = Image(nsImage: nsImage)
                 }
+                return
             }
-        } catch {
-            guard let fallbackURL = URL(string: wallpaper.thumbs.large) else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: fallbackURL)
-                if let nsImage = NSImage(data: data) {
-                    await MainActor.run {
-                        fullImage = Image(nsImage: nsImage)
-                    }
+        } catch { }
+        guard let fallbackURL = URL(string: wallpaper.thumbs.original) else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: fallbackURL)
+            if let nsImage = NSImage(data: data) {
+                await MainActor.run {
+                    fullImage = Image(nsImage: nsImage)
                 }
-            } catch { }
-        }
+            }
+        } catch { }
     }
 }
 
@@ -669,7 +750,35 @@ struct WallhavenPreviewView: View {
     }
 
     private func loadPreviewImage() async {
-        guard let url = URL(string: wallpaper.thumbs.original) else { return }
+        guard let url = URL(string: wallpaper.path) else {
+            await loadFallbackPreview()
+            return
+        }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let nsImage = NSImage(data: data) {
+                await MainActor.run {
+                    previewImage = Image(nsImage: nsImage)
+                }
+                return
+            }
+        } catch { }
+        await loadFallbackPreview()
+    }
+
+    private func loadFallbackPreview() async {
+        guard let url = URL(string: wallpaper.thumbs.original) else {
+            guard let fallbackURL = URL(string: wallpaper.thumbs.large) else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: fallbackURL)
+                if let nsImage = NSImage(data: data) {
+                    await MainActor.run {
+                        previewImage = Image(nsImage: nsImage)
+                    }
+                }
+            } catch { }
+            return
+        }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             if let nsImage = NSImage(data: data) {
