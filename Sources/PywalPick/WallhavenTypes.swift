@@ -154,6 +154,44 @@ enum WallhavenCategory: String, Codable, CaseIterable, Sendable, Identifiable {
     }
 }
 
+enum WallhavenRatio: String, Codable, CaseIterable, Sendable, Identifiable {
+    case ratio16x9 = "16x9"
+    case ratio16x10 = "16x10"
+    case ratio4x3 = "4x3"
+    case ratio5x4 = "5x4"
+    case ratio21x9 = "21x9"
+    case ratio32x9 = "32x9"
+    case ratio1x1 = "1x1"
+    case ratio3x2 = "3x2"
+    case ratio4x5 = "4x5"
+    case ratio9x16 = "9x16"
+    case ratio9x18 = "9x18"
+    case ratio48x9 = "48x9"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .ratio16x9: return "16:9"
+        case .ratio16x10: return "16:10"
+        case .ratio4x3: return "4:3"
+        case .ratio5x4: return "5:4"
+        case .ratio21x9: return "21:9"
+        case .ratio32x9: return "32:9"
+        case .ratio1x1: return "1:1"
+        case .ratio3x2: return "3:2"
+        case .ratio4x5: return "4:5"
+        case .ratio9x16: return "9:16"
+        case .ratio9x18: return "9:18"
+        case .ratio48x9: return "48:9"
+        }
+    }
+
+    var ratioString: String {
+        rawValue
+    }
+}
+
 enum WallhavenSorting: String, CaseIterable, Sendable, Identifiable {
     case dateAdded = "date_added"
     case relevance = "relevance"
@@ -168,6 +206,28 @@ enum WallhavenSorting: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .dateAdded: return "Date Added"
         case .relevance: return "Relevance"
+        case .random: return "Random"
+        case .views: return "Views"
+        case .favorites: return "Favorites"
+        case .toplist: return "Toplist"
+        }
+    }
+}
+
+enum WallhavenRelevanceSorting: String, CaseIterable, Sendable, Identifiable {
+    case relevance = "relevance"
+    case dateAdded = "date_added"
+    case random = "random"
+    case views = "views"
+    case favorites = "favorites"
+    case toplist = "toplist"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .relevance: return "Relevance"
+        case .dateAdded: return "Date Added"
         case .random: return "Random"
         case .views: return "Views"
         case .favorites: return "Favorites"
@@ -290,6 +350,7 @@ struct WallhavenSearchParams: Sendable {
     var color: WallhavenColor? = nil
     var page: Int = 1
     var seed: String? = nil
+    var relevanceSorting: WallhavenRelevanceSorting? = nil
 
     func buildQueryItems() -> [URLQueryItem] {
         var items: [URLQueryItem] = []
@@ -329,6 +390,10 @@ struct WallhavenSearchParams: Sendable {
 
         if !ratios.isEmpty {
             items.append(URLQueryItem(name: "ratios", value: ratios.joined(separator: ",")))
+        }
+
+        if let relevanceSorting {
+            items.append(URLQueryItem(name: "sorting", value: relevanceSorting.rawValue))
         }
 
         if let color {

@@ -148,6 +148,20 @@ final class WallhavenViewModel: ObservableObject {
         Task { await search() }
     }
 
+    func toggleRatio(_ ratio: WallhavenRatio) {
+        if params.ratios.contains(ratio.ratioString) {
+            params.ratios.removeAll { $0 == ratio.ratioString }
+        } else {
+            params.ratios.append(ratio.ratioString)
+        }
+        Task { await search() }
+    }
+
+    func setRelevanceSorting(_ relevanceSorting: WallhavenRelevanceSorting) {
+        params.relevanceSorting = relevanceSorting
+        Task { await search() }
+    }
+
     func download(_ wallpaper: WallhavenWallpaper, to folder: String) async -> URL? {
         do {
             downloadProgress[wallpaper.id] = 0

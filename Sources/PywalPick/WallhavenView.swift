@@ -6,6 +6,7 @@ struct WallhavenView: View {
 
     @State private var columns = 4
     @State private var showColorPicker = false
+    @State private var highlightedIndex: Int = -1
 
     private let spacing: CGFloat = 12
 
@@ -20,6 +21,38 @@ struct WallhavenView: View {
             if viewModel.results.isEmpty && viewModel.searchQuery.isEmpty {
                 Task { await viewModel.search() }
             }
+        }
+        .onKeyPress(.downArrow) {
+            Task { await viewModel.loadNextPage() }
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            return .handled
+        }
+        .onKeyPress(.leftArrow) {
+            if highlightedIndex > 0 {
+                highlightedIndex -= 1
+            }
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            highlightedIndex += 1
+            return .handled
+        }
+        .onKeyPress(.return) {
+            if highlightedIndex >= 0 && highlightedIndex < viewModel.results.count {
+                viewModel.preview(viewModel.results[highlightedIndex])
+            }
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            if viewModel.showPreview {
+                viewModel.closePreview()
+            }
+            return .handled
+        }
+        .onKeyPress("/") {
+            return .handled
         }
     }
 
@@ -218,6 +251,53 @@ struct WallhavenView: View {
                     }
                 }
             }
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Aspect Ratio")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        ForEach(WallhavenRatio.allCases) { ratio in
+                            Toggle(isOn: Binding(
+                                get: { viewModel.params.ratios.contains(ratio.ratioString) },
+                                set: { enabled in
+                                    viewModel.toggleRatio(ratio)
+                                }
+                            )) {
+                                Text(ratio.displayName)
+                                    .font(.caption.monospaced())
+                            }
+                            .toggleStyle(.button)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Relevance Sorting")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        ForEach(WallhavenRelevanceSorting.allCases) { sorting in
+                            Toggle(isOn: Binding(
+                                get: { viewModel.params.relevanceSorting == sorting },
+                                set: { enabled in
+                                    if enabled {
+                                        viewModel.setRelevanceSorting(sorting)
+                                    }
+                                }
+                            )) {
+                                Text(sorting.displayName)
+                            }
+                            .toggleStyle(.button)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
         }
         .padding(12)
         .background(.quaternary.opacity(0.1))
@@ -332,7 +412,9 @@ struct WallhavenThumbnailCard: View {
     let onSetWallpaper: () -> Void
 
     @State private var thumbnailImage: Image?
+    @State private var fullImage: Image?
     @State private var isHovered = false
+    @State private var isFetchingFull = false
 
     var body: some View {
         ZStack {
@@ -340,7 +422,13 @@ struct WallhavenThumbnailCard: View {
                 .fill(.quaternary.opacity(0.15))
                 .aspectRatio(wallpaper.aspectRatio, contentMode: .fit)
 
-            if let thumbnailImage {
+            if let fullImage {
+                fullImage
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else if let thumbnailImage {
                 thumbnailImage
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -415,6 +503,9 @@ struct WallhavenThumbnailCard: View {
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
+            if hovering && fullImage == nil {
+                Task { await loadFullImage() }
+            }
         }
         .contextMenu {
             Button("Preview", systemImage: "eye") { onTap() }
@@ -443,8 +534,31 @@ struct WallhavenThumbnailCard: View {
                     thumbnailImage = Image(nsImage: nsImage)
                 }
             }
+        } catch { }
+    }
+
+    private func loadFullImage() async {
+        isFetchingFull = true
+        defer { isFetchingFull = false }
+
+        guard let url = URL(string: wallpaper.thumbs.original) else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let nsImage = NSImage(data: data) {
+                await MainActor.run {
+                    fullImage = Image(nsImage: nsImage)
+                }
+            }
         } catch {
-            // Silently fail - show placeholder
+            guard let fallbackURL = URL(string: wallpaper.thumbs.large) else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: fallbackURL)
+                if let nsImage = NSImage(data: data) {
+                    await MainActor.run {
+                        fullImage = Image(nsImage: nsImage)
+                    }
+                }
+            } catch { }
         }
     }
 }
