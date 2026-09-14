@@ -267,7 +267,7 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.hasMorePages)
     }
 
-    func testPrefetchLoadsOnePagePerSentinelAppearance() async {
+    func testPrefetchLoadsOnePagePerLoadedPage() async {
         let api = PagingWallhavenAPI(pages: [
             1: makeWallhavenResponse(id: "first", currentPage: 1, lastPage: 3, total: 3),
             2: makeWallhavenResponse(id: "second", currentPage: 2, lastPage: 3, total: 3),
@@ -277,20 +277,30 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
         viewModel.searchQuery = "cats"
 
         await viewModel.submitSearch()
-        await viewModel.prefetchNextPageIfNeeded()
-        await viewModel.prefetchNextPageIfNeeded()
+        await viewModel.prefetchNextPageIfNeeded(for: 1)
+        await viewModel.prefetchNextPageIfNeeded(for: 1)
 
         var requests = await api.requests
         XCTAssertEqual(requests.map(\.page), [1, 2])
         XCTAssertEqual(viewModel.results.map(\.id), ["first", "second"])
 
-        viewModel.prefetchSentinelDidDisappear()
-        await viewModel.prefetchNextPageIfNeeded()
+        await viewModel.prefetchNextPageIfNeeded(for: 2)
 
         requests = await api.requests
         XCTAssertEqual(requests.map(\.page), [1, 2, 3])
         XCTAssertEqual(viewModel.results.map(\.id), ["first", "second", "third"])
         XCTAssertFalse(viewModel.hasMorePages)
+    }
+
+    func testPrefetchTriggerStartsTwoRowsBeforeEnd() {
+        XCTAssertEqual(
+            WallhavenViewModel.prefetchTriggerIndex(resultCount: 24, columns: 4),
+            16
+        )
+        XCTAssertEqual(
+            WallhavenViewModel.prefetchTriggerIndex(resultCount: 48, columns: 6),
+            36
+        )
     }
 
     func testClearSearchReloadsBrowseResults() async {

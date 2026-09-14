@@ -294,6 +294,7 @@ struct WallhavenView: View {
                     Text("Color")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
+                    Spacer()
                     if viewModel.params.color != nil {
                         Button("Clear") {
                             viewModel.setColor(nil)
@@ -303,27 +304,10 @@ struct WallhavenView: View {
                         .foregroundStyle(Color.accentColor)
                     }
                 }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 16), spacing: 2) {
-                    ForEach(WallhavenColor.allCases) { color in
-                        Button {
-                            viewModel.setColor(viewModel.params.color == color ? nil : color)
-                        } label: {
-                            Rectangle()
-                                .fill(color.color)
-                                .frame(width: 24, height: 18)
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 3)
-                                        .stroke(viewModel.params.color == color ? Color.accentColor : Color.clear, lineWidth: 2)
-                                )
-                                .frame(minWidth: 32, minHeight: 28)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(color.displayName)
-                        .accessibilityAddTraits(viewModel.params.color == color ? .isSelected : [])
-                        .help(color.displayName)
-                    }
-                }
+                WallhavenColorFilterBar(
+                    selectedColor: viewModel.params.color,
+                    onSelect: { viewModel.setColor($0) }
+                )
             }
 
             HStack(spacing: 16) {
@@ -481,6 +465,11 @@ struct WallhavenView: View {
                 ) {
                 ForEach(viewModel.results.indices, id: \.self) { index in
                     let wallpaper = viewModel.results[index]
+                    let prefetchTriggerIndex = WallhavenViewModel.prefetchTriggerIndex(
+                        resultCount: viewModel.results.count,
+                        columns: columns
+                    )
+                    let shouldPrefetch = index == prefetchTriggerIndex
                     WallhavenThumbnailCard(
                         wallpaper: wallpaper,
                         isDownloaded: viewModel.downloadedIds.contains(wallpaper.id),
@@ -510,6 +499,13 @@ struct WallhavenView: View {
                         }
                     )
                     .id(wallpaper.id)
+                    .onAppear {
+                        guard shouldPrefetch else { return }
+                        let sourcePage = viewModel.currentPage
+                        Task {
+                            await viewModel.prefetchNextPageIfNeeded(for: sourcePage)
+                        }
+                    }
                 }
 
                 if viewModel.hasMorePages {
@@ -531,12 +527,6 @@ struct WallhavenView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 44)
-                    .onAppear {
-                        Task { await viewModel.prefetchNextPageIfNeeded() }
-                    }
-                    .onDisappear {
-                        viewModel.prefetchSentinelDidDisappear()
-                    }
                 }
             }
             .padding(spacing)
@@ -601,18 +591,34 @@ struct WallhavenView: View {
 private struct DownloadSuccessOverlay: View {
     let cornerRadius: CGFloat
     let iconSize: CGFloat
+    let isSubtle: Bool
 
     @State private var overlayOpacity = 0.0
     @State private var checkmarkScale = 0.35
 
+    init(cornerRadius: CGFloat, iconSize: CGFloat, isSubtle: Bool = false) {
+        self.cornerRadius = cornerRadius
+        self.iconSize = iconSize
+        self.isSubtle = isSubtle
+    }
+
     var body: some View {
         ZStack {
-            Color.green.opacity(0.88)
+            Color.green.opacity(isSubtle ? 0.24 : 0.88)
 
             Image(systemName: "checkmark")
-                .font(.system(size: iconSize, weight: .heavy))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+                .font(
+                    .system(
+                        size: isSubtle ? iconSize * 0.58 : iconSize,
+                        weight: isSubtle ? .semibold : .heavy
+                    )
+                )
+                .foregroundStyle(.white.opacity(isSubtle ? 0.9 : 1))
+                .shadow(
+                    color: isSubtle ? .clear : .black.opacity(0.2),
+                    radius: isSubtle ? 0 : 8,
+                    y: isSubtle ? 0 : 3
+                )
                 .scaleEffect(checkmarkScale)
         }
         .opacity(overlayOpacity)
@@ -620,19 +626,118 @@ private struct DownloadSuccessOverlay: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(.easeOut(duration: isSubtle ? 0.18 : 0.12)) {
                 overlayOpacity = 1
             }
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.62).delay(0.06)) {
+            withAnimation(
+                isSubtle
+                    ? .easeOut(duration: 0.2).delay(0.02)
+                    : .spring(response: 0.42, dampingFraction: 0.62).delay(0.06)
+            ) {
                 checkmarkScale = 1
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.92) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (isSubtle ? 0.72 : 0.92)) {
                 withAnimation(.easeOut(duration: 0.25)) {
                     overlayOpacity = 0
                     checkmarkScale = 1.1
                 }
             }
         }
+    }
+}
+
+/// Wallhaven color picker matching the library color filter bar style.
+struct WallhavenColorFilterBar: View {
+    let selectedColor: WallhavenColor?
+    let onSelect: (WallhavenColor?) -> Void
+
+    private let slant: CGFloat = 7
+    private let swatchHeight: CGFloat = 28
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: max(min(geometry.size.width * 0.008, 5), 2)) {
+                    Button {
+                        onSelect(nil)
+                    } label: {
+                        ParallelogramShape(slant: slant)
+                            .fill(
+                                selectedColor == nil
+                                    ? AnyShapeStyle(Color.accentColor.opacity(0.9))
+                                    : AnyShapeStyle(Color.secondary.opacity(0.18))
+                            )
+                            .overlay(
+                                ParallelogramShape(slant: slant)
+                                    .stroke(
+                                        selectedColor == nil
+                                            ? Color.accentColor.opacity(0.9)
+                                            : Color.primary.opacity(0.08),
+                                        lineWidth: selectedColor == nil
+                                            ? UIStyle.hairline * 1.5
+                                            : UIStyle.hairline
+                                    )
+                            )
+                            .overlay(
+                                Text("All")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundStyle(selectedColor == nil ? .white : .secondary)
+                            )
+                            .frame(width: 58, height: swatchHeight)
+                            .shadow(
+                                color: selectedColor == nil
+                                    ? Color.accentColor.opacity(0.25)
+                                    : .clear,
+                                radius: 4,
+                                y: 1
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Any color")
+                    .accessibilityAddTraits(selectedColor == nil ? .isSelected : [])
+                    .help("Any color")
+
+                    ForEach(WallhavenColor.allCases) { color in
+                        let isSelected = selectedColor == color
+                        Button {
+                            onSelect(isSelected ? nil : color)
+                        } label: {
+                            ParallelogramShape(slant: slant)
+                                .fill(
+                                    isSelected
+                                        ? AnyShapeStyle(color.color)
+                                        : AnyShapeStyle(color.color.opacity(0.45))
+                                )
+                                .overlay(
+                                    ParallelogramShape(slant: slant)
+                                        .stroke(
+                                            isSelected
+                                                ? Color.white.opacity(0.55)
+                                                : Color.primary.opacity(0.06),
+                                            lineWidth: isSelected
+                                                ? UIStyle.selectionLineWidth
+                                                : UIStyle.hairline
+                                        )
+                                )
+                                .frame(width: 44, height: swatchHeight)
+                                .shadow(
+                                    color: isSelected ? color.color.opacity(0.35) : .clear,
+                                    radius: 4,
+                                    y: 1
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(color.displayName)
+                        .accessibilityAddTraits(isSelected ? .isSelected : [])
+                        .help(color.displayName)
+                    }
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 2)
+                .frame(minWidth: geometry.size.width, alignment: .trailing)
+            }
+        }
+        .frame(height: swatchHeight + 8)
     }
 }
 
@@ -744,7 +849,11 @@ struct WallhavenThumbnailCard: View {
             }
 
             if isDownloadAnimating {
-                DownloadSuccessOverlay(cornerRadius: 10, iconSize: 76)
+                DownloadSuccessOverlay(
+                    cornerRadius: 10,
+                    iconSize: 76,
+                    isSubtle: isHighlighted
+                )
             }
         }
         .overlay(
@@ -870,7 +979,7 @@ struct WallhavenPreviewView: View {
                     }
 
                     if isDownloadAnimating, previewImage != nil {
-                        DownloadSuccessOverlay(cornerRadius: 12, iconSize: 124)
+                        DownloadSuccessOverlay(cornerRadius: 12, iconSize: 124, isSubtle: true)
                     }
                 }
 

@@ -36,7 +36,7 @@ final class WallhavenViewModel: ObservableObject {
     private let downloader = WallhavenDownloader.shared
 
     private var isPrefetching = false
-    private var prefetchGateOpen = true
+    private var lastPrefetchedPage: Int?
     private var activeSearchID: UUID?
     private var activeSearchQuery = ""
     private var defaultsSignature: String?
@@ -121,7 +121,7 @@ final class WallhavenViewModel: ObservableObject {
         params.page = 1
         hasMorePages = false
         isPrefetching = false
-        prefetchGateOpen = true
+        lastPrefetchedPage = nil
     }
 
     func submitSearch() async {
@@ -199,19 +199,25 @@ final class WallhavenViewModel: ObservableObject {
         await loadNextPage(isPrefetch: false)
     }
 
-    /// Prefetch one page when the bottom sentinel becomes visible.
+    /// Returns the first item index in the last two grid rows.
+    static func prefetchTriggerIndex(resultCount: Int, columns: Int) -> Int? {
+        guard resultCount > 0, columns > 0 else { return nil }
+        return max(resultCount - columns * 2, 0)
+    }
+
+    /// Prefetch one page when the two-row-ahead trigger becomes visible.
     ///
-    /// The gate stays closed after a successful prefetch until the sentinel
-    /// leaves the viewport, preventing a visible footer from recursively
-    /// loading the entire result set.
-    func prefetchNextPageIfNeeded() async {
-        guard prefetchGateOpen,
+    /// The source page prevents a trigger from an already-visible row from
+    /// cascading into another page after the response appends new results.
+    func prefetchNextPageIfNeeded(for sourcePage: Int) async {
+        guard sourcePage == currentPage,
+              lastPrefetchedPage != sourcePage,
               hasMorePages,
               !isPrefetching,
               activeSearchID != nil
         else { return }
 
-        prefetchGateOpen = false
+        lastPrefetchedPage = sourcePage
         let task = Task { [weak self] in
             guard let self else { return }
             await self.loadNextPage(isPrefetch: true)
@@ -222,11 +228,6 @@ final class WallhavenViewModel: ObservableObject {
         if prefetchTask != nil {
             prefetchTask = nil
         }
-    }
-
-    /// Re-arm automatic prefetch after the bottom sentinel leaves the viewport.
-    func prefetchSentinelDidDisappear() {
-        prefetchGateOpen = true
     }
 
     private func loadNextPage(isPrefetch: Bool) async {
@@ -264,7 +265,7 @@ final class WallhavenViewModel: ObservableObject {
             checkDownloadedStatus()
         } catch is CancellationError {
             if isPrefetch {
-                prefetchGateOpen = true
+                lastPrefetchedPage = nil
             }
             return
         } catch {
@@ -272,7 +273,7 @@ final class WallhavenViewModel: ObservableObject {
             hasError = true
             errorMessage = error.localizedDescription
             if isPrefetch {
-                prefetchGateOpen = true
+                lastPrefetchedPage = nil
             }
         }
     }
@@ -474,7 +475,7 @@ final class WallhavenViewModel: ObservableObject {
         isLoading = false
         isLoadingMore = false
         isPrefetching = false
-        prefetchGateOpen = true
+        lastPrefetchedPage = nil
     }
 
     private static func normalizedSearchQuery(_ query: String) -> String {
