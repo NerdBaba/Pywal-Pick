@@ -5,7 +5,6 @@ struct WallhavenView: View {
     @ObservedObject var settingsManager: SettingsManager
 
     @State private var columns = 4
-    @State private var showColorPicker = false
     @State private var highlightedIndex: Int = -1
     @State private var scrollToID: String?
     @FocusState private var isSearchFocused: Bool
@@ -33,20 +32,21 @@ struct WallhavenView: View {
             searchHeader
             Divider().opacity(0.45)
             contentArea
-            if viewModel.showToast, let message = viewModel.toastMessage {
-                toastBanner(message)
-            }
         }
         .onAppear {
+            viewModel.markViewAppeared()
             viewModel.applyDefaults(from: settingsManager.config)
-            viewModel.wallpaperFolderPath = settingsManager.config.wallpaperFolderPath
+            viewModel.updateWallpaperFolderPath(settingsManager.config.wallpaperFolderPath)
             if viewModel.results.isEmpty && viewModel.searchQuery.isEmpty {
                 Task { await viewModel.search() }
             }
             restoreGridFocus()
         }
+        .onDisappear {
+            viewModel.markViewDisappeared()
+        }
         .onChange(of: settingsManager.config.wallpaperFolderPath) { _, newFolder in
-            viewModel.wallpaperFolderPath = newFolder
+            viewModel.updateWallpaperFolderPath(newFolder)
         }
         .onChange(of: settingsManager.config.wallhavenAPIKey) { _, newKey in
             viewModel.apiKey = newKey
@@ -78,25 +78,6 @@ struct WallhavenView: View {
                 isGridFocused = true
             }
         }
-    }
-
-    private func toastBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            Text(message)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-        }
-        .foregroundStyle(.primary)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(.primary.opacity(0.1), lineWidth: 1)
-        )
-        .padding(.bottom, 12)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private func moveHighlight(_ direction: NavigationDirection, columns: Int) {
@@ -149,6 +130,8 @@ struct WallhavenView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Clear search")
+                        .help("Clear search")
                     }
                 }
                 .padding(.horizontal, 12)
@@ -312,18 +295,23 @@ struct WallhavenView: View {
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 16), spacing: 2) {
                     ForEach(WallhavenColor.allCases) { color in
-                        Rectangle()
-                            .fill(color.color)
-                            .frame(width: 24, height: 18)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 3)
-                                    .stroke(viewModel.params.color == color ? Color.accentColor : Color.clear, lineWidth: 2)
-                            )
-                            .onTapGesture {
-                                viewModel.setColor(viewModel.params.color == color ? nil : color)
-                            }
-                            .help(color.displayName)
+                        Button {
+                            viewModel.setColor(viewModel.params.color == color ? nil : color)
+                        } label: {
+                            Rectangle()
+                                .fill(color.color)
+                                .frame(width: 24, height: 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .stroke(viewModel.params.color == color ? Color.accentColor : Color.clear, lineWidth: 2)
+                                )
+                                .frame(minWidth: 32, minHeight: 28)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(color.displayName)
+                        .accessibilityAddTraits(viewModel.params.color == color ? .isSelected : [])
+                        .help(color.displayName)
                     }
                 }
             }
@@ -438,10 +426,12 @@ struct WallhavenView: View {
                     columns: Array(repeating: GridItem(.flexible(), spacing: spacing), count: columns),
                     spacing: spacing
                 ) {
-                ForEach(Array(viewModel.results.enumerated()), id: \.element.id) { index, wallpaper in
+                ForEach(viewModel.results.indices, id: \.self) { index in
+                    let wallpaper = viewModel.results[index]
                     WallhavenThumbnailCard(
                         wallpaper: wallpaper,
                         isDownloaded: viewModel.downloadedIds.contains(wallpaper.id),
+                        isDownloadAnimating: viewModel.downloadAnimationIDs.contains(wallpaper.id),
                         downloadProgress: viewModel.downloadProgress[wallpaper.id],
                         isHighlighted: index == highlightedIndex,
                         onTap: {
@@ -470,6 +460,7 @@ struct WallhavenView: View {
                 }
 
                 if viewModel.hasMorePages {
+                    let remaining = max(viewModel.totalResults - viewModel.results.count, 0)
                     HStack(spacing: 8) {
                         if viewModel.isLoadingMore {
                             ProgressView()
@@ -478,7 +469,7 @@ struct WallhavenView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         } else {
-                            Button("Load more (\(viewModel.totalResults - viewModel.results.count) remaining)") {
+                            Button(remaining > 0 ? "Load more (\(remaining) remaining)" : "Load more") {
                                 Task { await viewModel.loadNextPage() }
                             }
                             .buttonStyle(.bordered)
@@ -551,9 +542,48 @@ struct WallhavenView: View {
     }
 }
 
+private struct DownloadSuccessOverlay: View {
+    let cornerRadius: CGFloat
+    let iconSize: CGFloat
+
+    @State private var overlayOpacity = 0.0
+    @State private var checkmarkScale = 0.35
+
+    var body: some View {
+        ZStack {
+            Color.green.opacity(0.88)
+
+            Image(systemName: "checkmark")
+                .font(.system(size: iconSize, weight: .heavy))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+                .scaleEffect(checkmarkScale)
+        }
+        .opacity(overlayOpacity)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.12)) {
+                overlayOpacity = 1
+            }
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.62).delay(0.06)) {
+                checkmarkScale = 1
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.92) {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    overlayOpacity = 0
+                    checkmarkScale = 1.1
+                }
+            }
+        }
+    }
+}
+
 struct WallhavenThumbnailCard: View {
     let wallpaper: WallhavenWallpaper
     let isDownloaded: Bool
+    let isDownloadAnimating: Bool
     let downloadProgress: Double?
     let isHighlighted: Bool
     let onTap: () -> Void
@@ -563,8 +593,11 @@ struct WallhavenThumbnailCard: View {
     @State private var thumbnailImage: Image?
     @State private var fullImage: Image?
     @State private var isHovered = false
+    @State private var fullImageTask: Task<Void, Never>?
+    @State private var cancelImageTask: Task<Void, Never>?
 
     var showActions: Bool { isHovered || isHighlighted }
+    private var isDownloading: Bool { downloadProgress != nil }
 
     var body: some View {
         ZStack {
@@ -600,7 +633,9 @@ struct WallhavenThumbnailCard: View {
                             .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)
-                    .keyboardShortcut("d", modifiers: [])
+                    .disabled(isDownloaded || isDownloading)
+                    .accessibilityLabel(isDownloaded ? "Downloaded" : isDownloading ? "Downloading" : "Download")
+                    .help(isDownloaded ? "Downloaded" : isDownloading ? "Downloading" : "Download")
 
                     Button(action: onSetWallpaper) {
                         Image(systemName: "photo")
@@ -608,7 +643,8 @@ struct WallhavenThumbnailCard: View {
                             .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)
-                    .keyboardShortcut("s", modifiers: [])
+                    .accessibilityLabel("Set as wallpaper")
+                    .help("Set as wallpaper")
                 }
             }
 
@@ -644,10 +680,15 @@ struct WallhavenThumbnailCard: View {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                             .background(.ultraThinMaterial, in: Circle())
+                            .accessibilityLabel("Downloaded")
                     }
                     Spacer()
                 }
                 .padding(6)
+            }
+
+            if isDownloadAnimating {
+                DownloadSuccessOverlay(cornerRadius: 10, iconSize: 76)
             }
         }
         .overlay(
@@ -659,25 +700,35 @@ struct WallhavenThumbnailCard: View {
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
-            if hovering && fullImage == nil {
-                Task { await loadFullImage() }
+            if hovering {
+                scheduleFullImageLoad()
+            } else if !isHighlighted {
+                cancelFullImageLoad()
             }
         }
         .onChange(of: isHighlighted) { _, highlighted in
-            if highlighted && fullImage == nil {
-                Task { await loadFullImage() }
+            if highlighted {
+                scheduleFullImageLoad()
+            } else if !isHovered {
+                cancelFullImageLoad()
             }
         }
         .onDisappear {
+            cancelFullImageLoad()
             fullImage = nil
         }
         .contextMenu {
             Button("Preview", systemImage: "eye") { onTap() }
-            Button("Download", systemImage: "arrow.down.circle") { onDownload() }
+            Button(isDownloaded ? "Downloaded" : "Download", systemImage: isDownloaded ? "checkmark.circle.fill" : "arrow.down.circle") {
+                onDownload()
+            }
+            .disabled(isDownloaded || isDownloading)
             Button("Set as Wallpaper", systemImage: "photo") { onSetWallpaper() }
             Divider()
             Button("Open on Wallhaven", systemImage: "safari") {
-                NSWorkspace.shared.open(URL(string: wallpaper.url)!)
+                if let url = URL(string: wallpaper.url) {
+                    NSWorkspace.shared.open(url)
+                }
             }
             Button("Copy URL", systemImage: "link") {
                 NSPasteboard.general.clearContents()
@@ -695,21 +746,45 @@ struct WallhavenThumbnailCard: View {
         }
     }
 
-    private func loadFullImage() async {
-        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.thumbs.original, maxPixelSize: 1024) {
-            fullImage = Image(nsImage: image)
-            return
-        }
-        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.thumbs.large, maxPixelSize: 1024) {
-            fullImage = Image(nsImage: image)
+    private func scheduleFullImageLoad() {
+        guard fullImage == nil, fullImageTask == nil else { return }
+        let originalURL = wallpaper.thumbs.original
+        let largeURL = wallpaper.thumbs.large
+        fullImageTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            if let image = await WallhavenImageLoader.shared.load(urlString: originalURL, maxPixelSize: 1024) {
+                fullImage = Image(nsImage: image)
+            } else if let image = await WallhavenImageLoader.shared.load(urlString: largeURL, maxPixelSize: 1024) {
+                fullImage = Image(nsImage: image)
+            }
+            fullImageTask = nil
         }
     }
+
+    private func cancelFullImageLoad() {
+        fullImageTask?.cancel()
+        fullImageTask = nil
+        cancelImageTask?.cancel()
+        let originalURL = wallpaper.thumbs.original
+        let largeURL = wallpaper.thumbs.large
+        cancelImageTask = Task {
+            await WallhavenImageLoader.shared.cancel(urlString: originalURL, maxPixelSize: 1024)
+            guard !Task.isCancelled else { return }
+            await WallhavenImageLoader.shared.cancel(urlString: largeURL, maxPixelSize: 1024)
+            cancelImageTask = nil
+        }
+    }
+
 }
 
 struct WallhavenPreviewView: View {
     let wallpaper: WallhavenWallpaper
     let isDownloaded: Bool
+    let isDownloadAnimating: Bool
     let downloadProgress: Double?
+    let feedbackMessage: String?
+    let feedbackIsError: Bool
     let onDownload: () -> Void
     let onSetWallpaper: () -> Void
     let onDismiss: () -> Void
@@ -724,17 +799,23 @@ struct WallhavenPreviewView: View {
                 .onTapGesture(perform: onDismiss)
 
             VStack(spacing: 20) {
-                if let previewImage {
-                    previewImage
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: 900, maxHeight: 550)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .shadow(radius: 20)
-                } else {
-                    ProgressView()
-                        .controlSize(.large)
-                        .frame(width: 200, height: 200)
+                ZStack {
+                    if let previewImage {
+                        previewImage
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 900, maxHeight: 550)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .shadow(radius: 20)
+                    } else {
+                        ProgressView()
+                            .controlSize(.large)
+                            .frame(width: 200, height: 200)
+                    }
+
+                    if isDownloadAnimating, previewImage != nil {
+                        DownloadSuccessOverlay(cornerRadius: 12, iconSize: 124)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -758,8 +839,27 @@ struct WallhavenPreviewView: View {
                     .font(.caption)
 
                     if let progress = downloadProgress, progress > 0 && progress < 1 {
-                        ProgressView(value: progress)
-                            .progressViewStyle(.linear)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ProgressView(value: progress)
+                                .progressViewStyle(.linear)
+                            Text("Downloading… \(Int(progress * 100))%")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if isDownloaded {
+                        Label("Downloaded", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.green)
+                    }
+
+                    if let feedbackMessage {
+                        Label(
+                            feedbackMessage,
+                            systemImage: feedbackIsError ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
+                        )
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(feedbackIsError ? .red : .green)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
 
                     HStack(spacing: 4) {
@@ -776,11 +876,21 @@ struct WallhavenPreviewView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 HStack(spacing: 12) {
-                    Button("Download", systemImage: "arrow.down.circle") {
-                        onDownload()
+                    if downloadProgress != nil {
+                        Label("Downloading…", systemImage: "arrow.down.circle")
+                            .foregroundStyle(.secondary)
+                            .controlSize(.large)
+                    } else if isDownloaded {
+                        Label("Downloaded", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .controlSize(.large)
+                    } else {
+                        Button("Download", systemImage: "arrow.down.circle") {
+                            onDownload()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
 
                     Button("Set as Wallpaper", systemImage: "photo") {
                         onSetWallpaper()
@@ -790,7 +900,9 @@ struct WallhavenPreviewView: View {
                     .controlSize(.large)
 
                     Button("Open in Browser", systemImage: "safari") {
-                        NSWorkspace.shared.open(URL(string: wallpaper.url)!)
+                        if let url = URL(string: wallpaper.url) {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)

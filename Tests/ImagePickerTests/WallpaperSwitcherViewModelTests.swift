@@ -54,4 +54,42 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.currentWallpaper)
         XCTAssertNil(viewModel.highlightedIndex)
     }
+
+    func testDownloadProgressClampsToUnitInterval() {
+        XCTAssertEqual(
+            DownloadProgress(bytesDownloaded: 150, totalBytes: 100).fractionCompleted,
+            1.0
+        )
+        XCTAssertEqual(
+            DownloadProgress(bytesDownloaded: -1, totalBytes: 100).fractionCompleted,
+            0.0
+        )
+    }
+
+    func testDownloadedIdsStaticIgnoresDirectories() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        try Data([0xFF]).write(to: folder.appendingPathComponent("wallhaven-abc.jpg"))
+        try FileManager.default.createDirectory(
+            at: folder.appendingPathComponent("wallhaven-not-a-file"),
+            withIntermediateDirectories: false
+        )
+
+        let ids = WallhavenDownloader.downloadedIdsStatic(in: folder.path)
+
+        XCTAssertEqual(ids, ["abc"])
+    }
+
+    func testDownloadAnimationStateCanBeShownAndDismissed() {
+        let viewModel = WallhavenViewModel()
+
+        viewModel.showDownloadAnimation(for: "abc")
+        XCTAssertTrue(viewModel.downloadAnimationIDs.contains("abc"))
+
+        viewModel.dismissDownloadAnimation(for: "abc")
+        XCTAssertFalse(viewModel.downloadAnimationIDs.contains("abc"))
+    }
 }

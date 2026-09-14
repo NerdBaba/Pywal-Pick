@@ -6,7 +6,7 @@ struct DownloadProgress: Sendable {
 
     var fractionCompleted: Double {
         guard totalBytes > 0 else { return 0 }
-        return Double(bytesDownloaded) / Double(totalBytes)
+        return min(max(Double(bytesDownloaded) / Double(totalBytes), 0), 1)
     }
 }
 
@@ -14,6 +14,7 @@ final class WallhavenDownloadState: NSObject, URLSessionDownloadDelegate, @unche
     let destinationURL: URL
     let progressHandler: (@Sendable (DownloadProgress) -> Void)?
     var continuation: CheckedContinuation<URL, Error>?
+    private let lock = NSLock()
 
     init(
         destinationURL: URL,
@@ -38,7 +39,7 @@ final class WallhavenDownloadState: NSObject, URLSessionDownloadDelegate, @unche
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        guard let continuation else { return }
+        guard let continuation = takeContinuation() else { return }
         do {
             try FileManager.default.createDirectory(
                 at: destinationURL.deletingLastPathComponent(),
@@ -52,19 +53,29 @@ final class WallhavenDownloadState: NSObject, URLSessionDownloadDelegate, @unche
         } catch {
             continuation.resume(throwing: WallhavenError.networkError(error.localizedDescription))
         }
-        self.continuation = nil
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let continuation else { return }
-        if let error {
-            if (error as NSError).code == NSURLErrorCancelled {
-                continuation.resume(throwing: CancellationError())
-            } else {
-                continuation.resume(throwing: WallhavenError.networkError(error.localizedDescription))
-            }
-            self.continuation = nil
+        guard let error, let continuation = takeContinuation() else { return }
+        if (error as NSError).code == NSURLErrorCancelled {
+            continuation.resume(throwing: CancellationError())
+        } else {
+            continuation.resume(throwing: WallhavenError.networkError(error.localizedDescription))
         }
+    }
+
+    private func takeContinuation() -> CheckedContinuation<URL, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        let value = continuation
+        continuation = nil
+        return value
+    }
+
+    func setContinuation(_ continuation: CheckedContinuation<URL, Error>) {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
     }
 }
 
@@ -93,6 +104,9 @@ final class WallhavenDownloader: @unchecked Sendable {
         to destinationFolder: String,
         progressHandler: (@Sendable (DownloadProgress) -> Void)? = nil
     ) async throws -> URL {
+        guard !destinationFolder.isEmpty else {
+            throw WallhavenError.networkError("No wallpaper folder configured")
+        }
         let destinationURL = buildDestinationURL(for: wallpaper, in: destinationFolder)
 
         if FileManager.default.fileExists(atPath: destinationURL.path) {
@@ -100,7 +114,10 @@ final class WallhavenDownloader: @unchecked Sendable {
             return destinationURL
         }
 
-        guard let downloadURL = URL(string: wallpaper.path) else {
+        guard let downloadURL = URL(string: wallpaper.path),
+              let scheme = downloadURL.scheme,
+              scheme == "http" || scheme == "https"
+        else {
             throw WallhavenError.invalidResponse
         }
 
@@ -115,12 +132,14 @@ final class WallhavenDownloader: @unchecked Sendable {
         states[wallpaper.id] = state
 
         do {
-            return try await withCheckedThrowingContinuation { continuation in
-                state.continuation = continuation
+            let result = try await withCheckedThrowingContinuation { continuation in
+                state.setContinuation(continuation)
                 let task = session.downloadTask(with: downloadURL)
                 self.activeDownloads[wallpaper.id] = task
                 task.resume()
             }
+            cleanupDownload(wallpaper.id)
+            return result
         } catch is CancellationError {
             cleanupDownload(wallpaper.id)
             throw CancellationError()
@@ -143,6 +162,9 @@ final class WallhavenDownloader: @unchecked Sendable {
         )
 
         while let fileURL = enumerator?.nextObject() as? URL {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+                  values.isRegularFile == true
+            else { continue }
             if fileURL.lastPathComponent.hasPrefix("wallhaven-\(wallpaperId)") {
                 return fileURL
             }
@@ -164,6 +186,9 @@ final class WallhavenDownloader: @unchecked Sendable {
         )
         var ids = Set<String>()
         while let fileURL = enumerator?.nextObject() as? URL {
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
+                  values.isRegularFile == true
+            else { continue }
             let name = fileURL.lastPathComponent
             guard name.hasPrefix("wallhaven-") else { continue }
             let stem = fileURL.deletingPathExtension().lastPathComponent

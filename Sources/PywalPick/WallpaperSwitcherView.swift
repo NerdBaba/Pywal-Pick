@@ -241,9 +241,6 @@ public struct WallpaperSwitcherView: View {
 
     public init() {}
 
-    // Thumbnail cache for better performance
-    @State private var thumbnailCache: [URL: Image] = [:]
-
     public var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -437,6 +434,7 @@ public struct WallpaperSwitcherView: View {
                                                     .symbolRenderingMode(.hierarchical)
                                             }
                                             .buttonStyle(.plain)
+                                            .accessibilityLabel("Clear search")
                                             .help("Clear search")
                                         }
                                     }
@@ -656,7 +654,10 @@ public struct WallpaperSwitcherView: View {
                 WallhavenPreviewView(
                     wallpaper: wallpaper,
                     isDownloaded: wallhavenViewModel.downloadedIds.contains(wallpaper.id),
+                    isDownloadAnimating: wallhavenViewModel.downloadAnimationIDs.contains(wallpaper.id),
                     downloadProgress: wallhavenViewModel.downloadProgress[wallpaper.id],
+                    feedbackMessage: wallhavenViewModel.showToast ? wallhavenViewModel.toastMessage : nil,
+                    feedbackIsError: wallhavenViewModel.toastIsError,
                     onDownload: {
                         Task {
                             await wallhavenViewModel.download(
@@ -713,7 +714,6 @@ public struct WallpaperSwitcherView: View {
             Text(deletionErrorMessage ?? "The wallpaper could not be deleted.")
         }
         .onReceive(NotificationCenter.default.publisher(for: CacheMaintenance.rebuildNotification)) { _ in
-            thumbnailCache.removeAll()
             carouselRefreshID = UUID()
             let folder = settingsManager.config.wallpaperFolderPath
             guard !folder.isEmpty else { return }

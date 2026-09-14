@@ -19,8 +19,10 @@ final class WallhavenViewModel: ObservableObject {
 
     @Published var downloadProgress: [String: Double] = [:]
     @Published var downloadedIds: Set<String> = []
+    @Published private(set) var downloadAnimationIDs: Set<String> = []
     @Published var toastMessage: String?
     @Published var showToast = false
+    @Published var toastIsError = false
 
     @Published var selectedWallpaper: WallhavenWallpaper?
     @Published var showPreview: Bool = false
@@ -34,6 +36,12 @@ final class WallhavenViewModel: ObservableObject {
 
     private var isPrefetching = false
     private var defaultsSignature: String?
+    private var filterDebounceTask: Task<Void, Never>?
+    private var downloadedScanTask: Task<Void, Never>?
+    private var lastScannedFolder = ""
+    private var lastScanDate = Date.distantPast
+    private var viewActive = true
+    private var downloadAnimationTasks: [String: Task<Void, Never>] = [:]
 
     init() {
         setupDebounce()
@@ -134,7 +142,7 @@ final class WallhavenViewModel: ObservableObject {
                 currentPage = response.meta.currentPage
                 totalResults = response.meta.total
 
-                await checkDownloadedStatus()
+                checkDownloadedStatus()
             } catch {
                 if Task.isCancelled { return }
                 hasError = true
@@ -153,6 +161,10 @@ final class WallhavenViewModel: ObservableObject {
 
         isPrefetching = true
         isLoadingMore = true
+        defer {
+            isPrefetching = false
+            isLoadingMore = false
+        }
         let nextPage = currentPage + 1
 
         do {
@@ -176,14 +188,13 @@ final class WallhavenViewModel: ObservableObject {
             params.page = currentPage
             hasMorePages = response.meta.currentPage < response.meta.lastPage
 
-            await checkDownloadedStatus()
+            checkDownloadedStatus()
+        } catch is CancellationError {
+            return
         } catch {
             hasError = true
             errorMessage = error.localizedDescription
         }
-
-        isPrefetching = false
-        isLoadingMore = false
     }
 
     func refresh() async {
@@ -192,10 +203,18 @@ final class WallhavenViewModel: ObservableObject {
 
     private func applyFilterChange() {
         searchTask?.cancel()
+        filterDebounceTask?.cancel()
         currentPage = 1
         params.page = 1
         params.seed = nil
-        Task { await search() }
+        results = []
+        hasMorePages = false
+        hasError = false
+        filterDebounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard let self, !Task.isCancelled, self.viewActive else { return }
+            await self.search()
+        }
     }
 
     func setSorting(_ sorting: WallhavenSorting) {
@@ -252,6 +271,11 @@ final class WallhavenViewModel: ObservableObject {
     }
 
     func download(_ wallpaper: WallhavenWallpaper, to folder: String) async -> URL? {
+        guard !folder.isEmpty else {
+            showFeedback("Set a wallpaper folder in Settings first", isError: true)
+            return nil
+        }
+        guard downloadProgress[wallpaper.id] == nil else { return nil }
         do {
             downloadProgress[wallpaper.id] = 0
 
@@ -265,12 +289,15 @@ final class WallhavenViewModel: ObservableObject {
             }
 
             downloadedIds.insert(wallpaper.id)
+            showDownloadAnimation(for: wallpaper.id)
             downloadProgress.removeValue(forKey: wallpaper.id)
-            showFeedback("Downloaded wallhaven-\(wallpaper.id).\(wallpaper.fileExtension)")
             return url
+        } catch is CancellationError {
+            downloadProgress.removeValue(forKey: wallpaper.id)
+            return nil
         } catch {
             downloadProgress.removeValue(forKey: wallpaper.id)
-            showFeedback("Download failed: \(error.localizedDescription)")
+            showFeedback("Download failed: \(error.localizedDescription)", isError: true)
             return nil
         }
     }
@@ -279,11 +306,28 @@ final class WallhavenViewModel: ObservableObject {
         showFeedback("Set \(wallpaper.resolution) wallpaper from Wallhaven")
     }
 
+    func showDownloadAnimation(for wallpaperID: String) {
+        downloadAnimationTasks[wallpaperID]?.cancel()
+        downloadAnimationIDs.insert(wallpaperID)
+        downloadAnimationTasks[wallpaperID] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_250_000_000)
+            guard !Task.isCancelled else { return }
+            self?.dismissDownloadAnimation(for: wallpaperID)
+        }
+    }
+
+    func dismissDownloadAnimation(for wallpaperID: String) {
+        downloadAnimationTasks[wallpaperID]?.cancel()
+        downloadAnimationTasks.removeValue(forKey: wallpaperID)
+        downloadAnimationIDs.remove(wallpaperID)
+    }
+
     private var toastTask: Task<Void, Never>?
 
-    private func showFeedback(_ message: String) {
+    private func showFeedback(_ message: String, isError: Bool = false) {
         toastTask?.cancel()
         toastMessage = message
+        toastIsError = isError
         showToast = true
         toastTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -304,6 +348,7 @@ final class WallhavenViewModel: ObservableObject {
     }
 
     func preview(_ wallpaper: WallhavenWallpaper) {
+        guard results.contains(where: { $0.id == wallpaper.id }) else { return }
         selectedWallpaper = wallpaper
         showPreview = true
     }
@@ -314,8 +359,16 @@ final class WallhavenViewModel: ObservableObject {
     }
 
     func clearSearch() {
+        searchTask?.cancel()
+        filterDebounceTask?.cancel()
+        downloadedScanTask?.cancel()
+        currentPage = 1
+        params.page = 1
+        params.seed = nil
         searchQuery = ""
         results = []
+        isLoading = false
+        isLoadingMore = false
         hasError = false
         hasMorePages = false
         totalResults = 0
@@ -323,13 +376,45 @@ final class WallhavenViewModel: ObservableObject {
 
     @Published var wallpaperFolderPath: String = ""
 
-    private func checkDownloadedStatus() async {
+    func updateWallpaperFolderPath(_ path: String) {
+        guard wallpaperFolderPath != path else { return }
+        wallpaperFolderPath = path
+        lastScannedFolder = ""
+        lastScanDate = .distantPast
+        checkDownloadedStatus()
+    }
+
+    private func checkDownloadedStatus() {
         guard !wallpaperFolderPath.isEmpty else { return }
         let folder = wallpaperFolderPath
-        let known = await Task.detached {
-            WallhavenDownloader.downloadedIdsStatic(in: folder)
-        }.value
-        downloadedIds.formUnion(known)
+        downloadedScanTask?.cancel()
+        downloadedScanTask = Task { [weak self] in
+            guard let self else { return }
+            guard folder != self.lastScannedFolder ||
+                    Date().timeIntervalSince(self.lastScanDate) >= 30
+            else { return }
+            let known = await Task.detached {
+                WallhavenDownloader.downloadedIdsStatic(in: folder)
+            }.value
+            guard !Task.isCancelled else { return }
+            self.downloadedIds.formUnion(known)
+            self.lastScannedFolder = folder
+            self.lastScanDate = Date()
+        }
+    }
+
+    func markViewAppeared() {
+        viewActive = true
+    }
+
+    func markViewDisappeared() {
+        viewActive = false
+        searchTask?.cancel()
+        filterDebounceTask?.cancel()
+        downloadedScanTask?.cancel()
+        downloadAnimationTasks.values.forEach { $0.cancel() }
+        downloadAnimationTasks.removeAll()
+        downloadAnimationIDs.removeAll()
     }
 
     func markAsDownloaded(_ wallpaperId: String) {

@@ -69,6 +69,7 @@ struct ColorFilterBar: View {
                 .shadow(color: isSelected ? Color.accentColor.opacity(0.25) : .clear, radius: 4, y: 1)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Show all colors")
         .help("Show all colors")
     }
 
@@ -109,6 +110,7 @@ struct ColorFilterBar: View {
                     .shadow(color: isSelected ? baseColor.opacity(0.35) : .clear, radius: 4, y: 1)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(group.rawValue.capitalized)
             .help(group.rawValue.capitalized)
         }
     }

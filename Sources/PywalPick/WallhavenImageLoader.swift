@@ -41,7 +41,9 @@ actor WallhavenImageLoader {
             touch(key)
             return cached
         }
+        if Task.isCancelled { return nil }
         if let diskImage = loadFromDisk(key: key) {
+            if Task.isCancelled { return nil }
             store(key, image: diskImage)
             return diskImage
         }
