@@ -72,7 +72,7 @@ struct WallhavenMeta: Codable, Sendable {
     let lastPage: Int
     let perPage: Int
     let total: Int
-    let query: WallhavenQuery?
+    let query: String?
     let seed: String?
 
     enum CodingKeys: String, CodingKey {
@@ -81,11 +81,6 @@ struct WallhavenMeta: Codable, Sendable {
         case perPage = "per_page"
         case total, query, seed
     }
-}
-
-struct WallhavenQuery: Codable, Sendable {
-    let id: Int?
-    let tag: String?
 }
 
 struct WallhavenCollection: Codable, Sendable, Identifiable {

@@ -192,6 +192,28 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
         XCTAssertNil(queryItem)
     }
 
+    func testWallhavenResponseDecodesStringQueryMetadata() throws {
+        let data = Data(
+            """
+            {
+              "data": [],
+              "meta": {
+                "current_page": 1,
+                "last_page": 14,
+                "per_page": 24,
+                "total": 334,
+                "query": "doom",
+                "seed": null
+              }
+            }
+            """.utf8
+        )
+
+        let response = try JSONDecoder().decode(WallhavenSearchResponse.self, from: data)
+
+        XCTAssertEqual(response.meta.query, "doom")
+    }
+
     func testSearchErrorClearsLoadingAndSurfacesMessage() async {
         let api = StubWallhavenAPI(result: .failure(.rateLimited))
         let viewModel = WallhavenViewModel(api: api)
