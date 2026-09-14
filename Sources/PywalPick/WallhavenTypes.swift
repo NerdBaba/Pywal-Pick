@@ -332,8 +332,9 @@ struct WallhavenSearchParams: Sendable {
     func buildQueryItems() -> [URLQueryItem] {
         var items: [URLQueryItem] = []
 
-        if !query.isEmpty {
-            items.append(URLQueryItem(name: "q", value: query))
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedQuery.isEmpty {
+            items.append(URLQueryItem(name: "q", value: normalizedQuery))
         }
 
         let catString = [

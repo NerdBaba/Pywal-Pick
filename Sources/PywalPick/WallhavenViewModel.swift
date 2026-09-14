@@ -30,11 +30,15 @@ final class WallhavenViewModel: ObservableObject {
     @Published var apiKey: String = ""
 
     private var searchTask: Task<Void, Never>?
+    private var prefetchTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
-    private let api = WallhavenAPI.shared
+    private let api: any WallhavenSearching
     private let downloader = WallhavenDownloader.shared
 
     private var isPrefetching = false
+    private var prefetchGateOpen = true
+    private var activeSearchID: UUID?
+    private var activeSearchQuery = ""
     private var defaultsSignature: String?
     private var filterDebounceTask: Task<Void, Never>?
     private var downloadedScanTask: Task<Void, Never>?
@@ -43,8 +47,9 @@ final class WallhavenViewModel: ObservableObject {
     private var viewActive = true
     private var downloadAnimationTasks: [String: Task<Void, Never>] = [:]
 
-    init() {
-        setupDebounce()
+    init(api: any WallhavenSearching = WallhavenAPI.shared) {
+        self.api = api
+        setupQueryChangeHandling()
         let config = AppConfig.load()
         apiKey = config.wallhavenAPIKey
         params = Self.params(from: config)
@@ -99,43 +104,74 @@ final class WallhavenViewModel: ObservableObject {
         }
     }
 
-    private func setupDebounce() {
+    private func setupQueryChangeHandling() {
         $searchQuery
-            .debounce(for: .milliseconds(600), scheduler: RunLoop.main)
+            .dropFirst()
             .removeDuplicates()
             .sink { [weak self] _ in
-                guard let self else { return }
-                Task { await self.search() }
+                self?.cancelSearchForQueryEdit()
             }
             .store(in: &cancellables)
     }
 
     private func resetPaginationLocked() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
         currentPage = 1
         params.page = 1
         hasMorePages = false
         isPrefetching = false
+        prefetchGateOpen = true
+    }
+
+    func submitSearch() async {
+        let normalizedQuery = normalizeSearchQuery(searchQuery)
+        if searchQuery != normalizedQuery {
+            searchQuery = normalizedQuery
+        }
+        guard !(isLoading && activeSearchQuery == normalizedQuery) else { return }
+        await performSearch(query: normalizedQuery)
     }
 
     func search() async {
-        searchTask?.cancel()
+        await performSearch(query: normalizeSearchQuery(searchQuery))
+    }
 
-        searchTask = Task {
+    private func performSearch(query: String) async {
+        searchTask?.cancel()
+        let searchID = UUID()
+        activeSearchID = searchID
+        activeSearchQuery = query
+
+        resetPaginationLocked()
+        results = []
+        totalResults = 0
+        hasError = false
+        errorMessage = ""
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            guard !Task.isCancelled, activeSearchID == searchID else { return }
             isLoading = true
             isLoadingMore = false
-            hasError = false
-            resetPaginationLocked()
+
+            defer {
+                if activeSearchID == searchID {
+                    isLoading = false
+                    isLoadingMore = false
+                }
+            }
 
             do {
                 var requestParams = params
-                requestParams.query = searchQuery
+                requestParams.query = query
                 requestParams.page = 1
                 let response = try await api.search(
                     params: requestParams,
                     apiKey: apiKey.isEmpty ? nil : apiKey
                 )
 
-                if Task.isCancelled { return }
+                guard !Task.isCancelled, activeSearchID == searchID else { return }
 
                 results = response.data
                 hasMorePages = response.meta.currentPage < response.meta.lastPage
@@ -143,21 +179,58 @@ final class WallhavenViewModel: ObservableObject {
                 totalResults = response.meta.total
 
                 checkDownloadedStatus()
+            } catch is CancellationError {
+                return
             } catch {
-                if Task.isCancelled { return }
+                guard !Task.isCancelled, activeSearchID == searchID else { return }
                 hasError = true
                 errorMessage = error.localizedDescription
             }
-
-            isLoading = false
-            isLoadingMore = false
         }
 
-        await searchTask?.value
+        searchTask = task
+        await task.value
+        if activeSearchID == searchID {
+            searchTask = nil
+        }
     }
 
     func loadNextPage() async {
-        guard hasMorePages, !isPrefetching else { return }
+        await loadNextPage(isPrefetch: false)
+    }
+
+    /// Prefetch one page when the bottom sentinel becomes visible.
+    ///
+    /// The gate stays closed after a successful prefetch until the sentinel
+    /// leaves the viewport, preventing a visible footer from recursively
+    /// loading the entire result set.
+    func prefetchNextPageIfNeeded() async {
+        guard prefetchGateOpen,
+              hasMorePages,
+              !isPrefetching,
+              activeSearchID != nil
+        else { return }
+
+        prefetchGateOpen = false
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.loadNextPage(isPrefetch: true)
+        }
+        prefetchTask = task
+        await task.value
+
+        if prefetchTask != nil {
+            prefetchTask = nil
+        }
+    }
+
+    /// Re-arm automatic prefetch after the bottom sentinel leaves the viewport.
+    func prefetchSentinelDidDisappear() {
+        prefetchGateOpen = true
+    }
+
+    private func loadNextPage(isPrefetch: Bool) async {
+        guard hasMorePages, !isPrefetching, let searchID = activeSearchID else { return }
 
         isPrefetching = true
         isLoadingMore = true
@@ -169,14 +242,14 @@ final class WallhavenViewModel: ObservableObject {
 
         do {
             var requestParams = params
-            requestParams.query = searchQuery
+            requestParams.query = normalizeSearchQuery(searchQuery)
             requestParams.page = nextPage
             let response = try await api.search(
                 params: requestParams,
                 apiKey: apiKey.isEmpty ? nil : apiKey
             )
 
-            if Task.isCancelled { return }
+            guard !Task.isCancelled, activeSearchID == searchID else { return }
 
             if nextPage > 1, let seed = response.meta.seed, !seed.isEmpty, requestParams.seed == nil {
                 params.seed = seed
@@ -190,10 +263,17 @@ final class WallhavenViewModel: ObservableObject {
 
             checkDownloadedStatus()
         } catch is CancellationError {
+            if isPrefetch {
+                prefetchGateOpen = true
+            }
             return
         } catch {
+            guard !Task.isCancelled, activeSearchID == searchID else { return }
             hasError = true
             errorMessage = error.localizedDescription
+            if isPrefetch {
+                prefetchGateOpen = true
+            }
         }
     }
 
@@ -202,7 +282,7 @@ final class WallhavenViewModel: ObservableObject {
     }
 
     private func applyFilterChange() {
-        searchTask?.cancel()
+        cancelActiveSearch()
         filterDebounceTask?.cancel()
         currentPage = 1
         params.page = 1
@@ -359,7 +439,7 @@ final class WallhavenViewModel: ObservableObject {
     }
 
     func clearSearch() {
-        searchTask?.cancel()
+        cancelActiveSearch()
         filterDebounceTask?.cancel()
         downloadedScanTask?.cancel()
         currentPage = 1
@@ -372,6 +452,37 @@ final class WallhavenViewModel: ObservableObject {
         hasError = false
         hasMorePages = false
         totalResults = 0
+        Task { [weak self] in
+            await self?.search()
+        }
+    }
+
+    private func cancelSearchForQueryEdit() {
+        cancelActiveSearch()
+        hasError = false
+        errorMessage = ""
+        hasMorePages = false
+    }
+
+    private func cancelActiveSearch() {
+        searchTask?.cancel()
+        searchTask = nil
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        activeSearchID = nil
+        activeSearchQuery = ""
+        isLoading = false
+        isLoadingMore = false
+        isPrefetching = false
+        prefetchGateOpen = true
+    }
+
+    private static func normalizedSearchQuery(_ query: String) -> String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizeSearchQuery(_ query: String) -> String {
+        Self.normalizedSearchQuery(query)
     }
 
     @Published var wallpaperFolderPath: String = ""
@@ -409,7 +520,7 @@ final class WallhavenViewModel: ObservableObject {
 
     func markViewDisappeared() {
         viewActive = false
-        searchTask?.cancel()
+        cancelActiveSearch()
         filterDebounceTask?.cancel()
         downloadedScanTask?.cancel()
         downloadAnimationTasks.values.forEach { $0.cancel() }

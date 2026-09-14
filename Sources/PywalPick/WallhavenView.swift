@@ -120,8 +120,9 @@ struct WallhavenView: View {
                         .textFieldStyle(.plain)
                         .focused($isSearchFocused)
                         .onSubmit {
-                            Task { await viewModel.search() }
+                            Task { await viewModel.submitSearch() }
                         }
+                        .submitLabel(.search)
                     if !viewModel.searchQuery.isEmpty {
                         Button {
                             viewModel.clearSearch()
@@ -138,6 +139,15 @@ struct WallhavenView: View {
                 .padding(.vertical, 8)
                 .background(.quaternary.opacity(0.3))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                Button {
+                    Task { await viewModel.submitSearch() }
+                } label: {
+                    Label("Search", systemImage: "magnifyingglass")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.isLoading)
+                .help("Search Wallhaven (Return)")
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
@@ -370,28 +380,50 @@ struct WallhavenView: View {
 
     @ViewBuilder
     private var contentArea: some View {
-        if viewModel.results.isEmpty && !viewModel.isLoading && !viewModel.hasError {
+        if viewModel.results.isEmpty && !viewModel.hasError {
             emptyState
         } else if viewModel.hasError && viewModel.results.isEmpty {
             errorState
         } else {
-            resultsGrid
+            VStack(spacing: 0) {
+                if viewModel.hasError {
+                    paginationErrorBanner
+                }
+                resultsGrid
+            }
         }
     }
 
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text(viewModel.searchQuery.isEmpty ? "Search wallhaven.cc" : "No results found")
-                .font(.headline)
-            Text(viewModel.searchQuery.isEmpty ?
-                "Enter a search term to find wallpapers" :
-                "Try adjusting your filters")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if viewModel.isLoading {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Searching Wallhaven…")
+                    .font(.headline)
+                Text("Fetching the latest wallpapers.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.secondary)
+                Text(viewModel.searchQuery.isEmpty ? "Search wallhaven.cc" : "No results found")
+                    .font(.headline)
+                Text(viewModel.searchQuery.isEmpty ?
+                    "Enter a search term and press Return" :
+                    "Try another search or adjust your filters")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !viewModel.searchQuery.isEmpty {
+                    Button("Clear search") {
+                        viewModel.clearSearch()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -413,10 +445,31 @@ struct WallhavenView: View {
             Button("Retry") {
                 Task { await viewModel.search() }
             }
+            .buttonStyle(.borderedProminent)
+            Button("Clear search") {
+                viewModel.clearSearch()
+            }
             .buttonStyle(.bordered)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var paginationErrorBanner: some View {
+        HStack(spacing: 8) {
+            Label("Couldn’t load more wallpapers", systemImage: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+            Spacer()
+            Button("Retry") {
+                Task { await viewModel.loadNextPage() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .font(.caption)
+        .padding(.horizontal, spacing)
+        .padding(.vertical, 8)
+        .background(.orange.opacity(0.08))
     }
 
     private var resultsGrid: some View {
@@ -479,7 +532,10 @@ struct WallhavenView: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 44)
                     .onAppear {
-                        Task { await viewModel.loadNextPage() }
+                        Task { await viewModel.prefetchNextPageIfNeeded() }
+                    }
+                    .onDisappear {
+                        viewModel.prefetchSentinelDidDisappear()
                     }
                 }
             }

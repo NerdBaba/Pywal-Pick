@@ -1,6 +1,10 @@
 import Foundation
 
-actor WallhavenAPI {
+protocol WallhavenSearching: Sendable {
+    func search(params: WallhavenSearchParams, apiKey: String?) async throws -> WallhavenSearchResponse
+}
+
+actor WallhavenAPI: WallhavenSearching {
     static let shared = WallhavenAPI()
 
     private let session: URLSession
@@ -34,7 +38,17 @@ actor WallhavenAPI {
             request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         }
 
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            throw WallhavenError.networkError(error.localizedDescription)
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw WallhavenError.invalidResponse
