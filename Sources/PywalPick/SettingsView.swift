@@ -13,6 +13,7 @@ public struct SettingsView: View {
     @State private var pendingWallpaperPath = ""
     @State private var pendingDummyFile = ""
     @State private var pendingWalBinary = ""
+    @State private var pendingMatugenBinary = ""
     @State private var pendingCustomScript = ""
     @State private var pathStatuses: [PickerType: PathStatus] = [:]
 
@@ -26,7 +27,7 @@ public struct SettingsView: View {
     @State private var cacheRebuildMessage: String?
 
     private enum PickerType: Hashable {
-        case folder, dummyFile, walBinary, script
+        case folder, dummyFile, walBinary, matugenBinary, script
     }
 
     private struct PathStatus: Equatable {
@@ -327,6 +328,52 @@ public struct SettingsView: View {
                     Text("Determines how wal extracts colors from wallpapers")
                         .font(UIStyle.caption)
                         .foregroundStyle(.secondary)
+
+                    if settingsManager.config.selectedBackend == .matugen {
+                        Text("Matugen generates a Material You palette, then Pywal Pick renders it through pywal so existing themes and integrations stay compatible.")
+                            .font(UIStyle.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .uiSettingsSection()
+
+                pathSection(
+                    title: "Matugen Binary",
+                    icon: "paintpalette",
+                    path: $pendingMatugenBinary,
+                    pickerType: .matugenBinary,
+                    apply: applyMatugenBinary,
+                    showsFindMatugen: true
+                )
+
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Matugen Palette", systemImage: "wand.and.stars")
+                        .font(UIStyle.sectionTitle)
+
+                    Picker("Mode", selection: $settingsManager.config.matugenMode) {
+                        ForEach(MatugenMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Picker("Scheme", selection: $settingsManager.config.matugenSchemeType) {
+                        ForEach(MatugenSchemeType.allCases) { type in
+                            Text(type.displayName).tag(type)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    LabeledContent("Contrast") {
+                        Slider(value: $settingsManager.config.matugenContrast, in: -1...1, step: 0.05)
+                        Text(String(format: "%+.2f", settingsManager.config.matugenContrast))
+                            .font(UIStyle.mono)
+                            .frame(width: 42, alignment: .trailing)
+                    }
+
+                    Text("Matugen is available as a backend in the main picker and backend cycle. These options apply the next time it is selected.")
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .uiSettingsSection()
 
@@ -561,7 +608,8 @@ public struct SettingsView: View {
         path: Binding<String>,
         pickerType: PickerType,
         apply: @escaping () -> Void,
-        showsFindWal: Bool = false
+        showsFindWal: Bool = false,
+        showsFindMatugen: Bool = false
     ) -> some View {
         let live = liveValidation(for: path.wrappedValue, type: pickerType)
         let applyStatus = pathStatuses[pickerType]
@@ -612,6 +660,16 @@ public struct SettingsView: View {
                     .help("Search common install locations for wal")
                 }
 
+                if showsFindMatugen {
+                    Button {
+                        findMatugenBinary()
+                    } label: {
+                        Label("Find Matugen", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Search common install locations for matugen")
+                }
+
                 if let applyStatus {
                     Label(
                         applyStatus.message,
@@ -656,6 +714,7 @@ public struct SettingsView: View {
         pendingWallpaperPath = settingsManager.config.wallpaperFolderPath
         pendingDummyFile = settingsManager.config.dummyWallpaperFile
         pendingWalBinary = settingsManager.config.walBinaryPath
+        pendingMatugenBinary = settingsManager.config.matugenBinaryPath
         pendingCustomScript = settingsManager.config.customScriptPath
     }
 
@@ -667,6 +726,8 @@ public struct SettingsView: View {
             pendingDummyFile = path
         case .walBinary:
             pendingWalBinary = path
+        case .matugenBinary:
+            pendingMatugenBinary = path
         case .script:
             pendingCustomScript = path
         }
@@ -684,6 +745,8 @@ public struct SettingsView: View {
             }
             return types
         case .walBinary:
+            return [.unixExecutable, .application]
+        case .matugenBinary:
             return [.unixExecutable, .application]
         case .script:
             return [.shellScript, .unixExecutable]
@@ -741,6 +804,21 @@ public struct SettingsView: View {
         setStatus(.walBinary, message: "Applied", isError: false)
     }
 
+    private func applyMatugenBinary() {
+        let path = pendingMatugenBinary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            setStatus(.matugenBinary, message: "Path cannot be empty", isError: true)
+            return
+        }
+        guard FileManager.default.isExecutableFile(atPath: path) else {
+            setStatus(.matugenBinary, message: "Executable not found at this path", isError: true)
+            return
+        }
+        pendingMatugenBinary = path
+        settingsManager.config.matugenBinaryPath = path
+        setStatus(.matugenBinary, message: "Applied", isError: false)
+    }
+
     private func applyCustomScript() {
         let path = pendingCustomScript.trimmingCharacters(in: .whitespacesAndNewlines)
         if path.isEmpty {
@@ -789,6 +867,14 @@ public struct SettingsView: View {
             }
             return LiveValidation(message: "File not found", isError: true, symbol: "exclamationmark.triangle")
         case .walBinary:
+            if FileManager.default.isExecutableFile(atPath: trimmed) {
+                return LiveValidation(message: "Executable found", isError: false, symbol: "checkmark.circle")
+            }
+            if exists {
+                return LiveValidation(message: "Not executable", isError: true, symbol: "exclamationmark.triangle")
+            }
+            return LiveValidation(message: "Binary not found", isError: true, symbol: "exclamationmark.triangle")
+        case .matugenBinary:
             if FileManager.default.isExecutableFile(atPath: trimmed) {
                 return LiveValidation(message: "Executable found", isError: false, symbol: "checkmark.circle")
             }
@@ -863,6 +949,24 @@ public struct SettingsView: View {
         }
 
         setStatus(.walBinary, message: "Could not find wal — install pywal or set path manually", isError: true)
+    }
+
+    private func findMatugenBinary() {
+        let candidates = [
+            NSHomeDirectory() + "/.cargo/bin/matugen",
+            "/opt/homebrew/bin/matugen",
+            "/usr/local/bin/matugen",
+            "/usr/bin/matugen",
+        ]
+
+        if let found = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            pendingMatugenBinary = found
+            pathStatuses[.matugenBinary] = nil
+            settingsManager.config.matugenBinaryPath = found
+            setStatus(.matugenBinary, message: "Found at \(found)", isError: false)
+        } else {
+            setStatus(.matugenBinary, message: "Could not find matugen — install it or set path manually", isError: true)
+        }
     }
 
     // MARK: - CLI Installation

@@ -192,6 +192,7 @@ func findWalBinary() -> String {
 func performWalApplication(
     walPath: String,
     dummyFile: String,
+    sourceFile: String,
     usedBackend: WalBackend,
     noPywalfox: Bool,
     runPywalfox: Bool,
@@ -199,37 +200,106 @@ func performWalApplication(
 ) -> Bool {
     _ = runShellCommand("killall WallpaperAgent")
 
-    let command = "\(walPath) -i \"\(dummyFile)\" -n --backend \(usedBackend.rawValue)"
+    let config = AppConfig.load()
+    if usedBackend == .matugen {
+        do {
+            let result = try blockingMatugenGenerate(
+                sourceURL: URL(fileURLWithPath: sourceFile),
+                inputURL: URL(fileURLWithPath: dummyFile),
+                config: config
+            )
+            print("✓ Matugen theme cache \(result.reused ? "reused" : "generated") in \(String(format: "%.2f", result.duration))s")
+            return finishWalApplication(
+                noPywalfox: noPywalfox,
+                runPywalfox: runPywalfox,
+                customScript: customScript
+            )
+        } catch {
+            print("⚠ Matugen failed: \(error.localizedDescription). Falling back to Schemer2.")
+        }
+    }
+
+    let walBackend = usedBackend == .matugen ? WalBackend.schemer2 : usedBackend
+    let command = "\(walPath) -i \"\(dummyFile)\" -n --backend \(walBackend.rawValue)"
     print("Running: \(command)")
     let walSuccess = runShellCommand(command)
 
     if walSuccess {
         Thread.sleep(forTimeInterval: 1)
-
-        let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
-        if FileManager.default.fileExists(atPath: walCachePath),
-           let colorsContent = try? String(contentsOfFile: walCachePath, encoding: .utf8) {
-            let colorLines = colorsContent.components(separatedBy: .newlines)
-                .filter { !$0.isEmpty && $0.hasPrefix("#") }
-            print("✓ Wal updated colors: \(colorLines.count) colors extracted")
-
-            setAccentColorFromWal()
-
-            if !noPywalfox && runPywalfox {
-                print("Running pywalfox update...")
-                _ = runShellCommand("pywalfox update")
-            }
-
-            if !customScript.isEmpty {
-                print("Running custom script: \(customScript)")
-                _ = runShellCommand(customScript)
-            }
-        }
+        return finishWalApplication(
+            noPywalfox: noPywalfox,
+            runPywalfox: runPywalfox,
+            customScript: customScript
+        )
     } else {
         print("✗ Wal command failed")
     }
 
     return walSuccess
+}
+
+/// Bridge the actor-backed Matugen service into the CLI's synchronous
+/// transition path. The CLI must keep its AppKit run loop synchronous while
+/// animated overlays are active; Matugen itself performs process work off the
+/// actor, so waiting here does not block the service's worker.
+private func blockingMatugenGenerate(
+    sourceURL: URL,
+    inputURL: URL,
+    config: AppConfig
+) throws -> MatugenThemeResult {
+    let semaphore = DispatchSemaphore(value: 0)
+    let box = BlockingResultBox<MatugenThemeResult>()
+
+    Task.detached {
+        do {
+            box.result = .success(try await MatugenThemeService.shared.generate(
+                sourceURL: sourceURL,
+                inputURL: inputURL,
+                config: config
+            ))
+        } catch {
+            box.result = .failure(error)
+        }
+        semaphore.signal()
+    }
+
+    semaphore.wait()
+    return try box.result!.get()
+}
+
+func finishWalApplication(
+    noPywalfox: Bool,
+    runPywalfox: Bool,
+    customScript: String
+) -> Bool {
+    let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
+    guard FileManager.default.fileExists(atPath: walCachePath),
+          let colorsContent = try? String(contentsOfFile: walCachePath, encoding: .utf8)
+    else {
+        print("⚠ Wal colors file not found after theme generation")
+        return false
+    }
+
+    let colorLines = colorsContent.components(separatedBy: .newlines)
+        .filter { !$0.isEmpty && $0.hasPrefix("#") }
+    guard colorLines.count >= 8 else {
+        print("⚠ Wal colors file contains only \(colorLines.count) colors")
+        return false
+    }
+    print("✓ Wal updated colors: \(colorLines.count) colors extracted")
+
+    setAccentColorFromWal()
+
+    if !noPywalfox && runPywalfox {
+        print("Running pywalfox update...")
+        _ = runShellCommand("pywalfox update")
+    }
+
+    if !customScript.isEmpty {
+        print("Running custom script: \(customScript)")
+        _ = runShellCommand(customScript)
+    }
+    return true
 }
 
 @MainActor
@@ -285,7 +355,11 @@ func runWal(
     }
 
     if dryRun {
-        print("[dry-run] Would execute: \(walPath) -i \"\(dummyFile)\" -n --backend \(usedBackend.rawValue)")
+        if usedBackend == .matugen {
+            print("[dry-run] Would generate a Matugen Material You palette and render it through wal")
+        } else {
+            print("[dry-run] Would execute: \(walPath) -i \"\(dummyFile)\" -n --backend \(usedBackend.rawValue)")
+        }
         return true
     }
 
@@ -293,6 +367,7 @@ func runWal(
         return performWalApplication(
             walPath: walPath,
             dummyFile: dummyFile,
+            sourceFile: wallpaperPath,
             usedBackend: usedBackend,
             noPywalfox: noPywalfox,
             runPywalfox: config.runPywalfox,
@@ -315,6 +390,7 @@ func runWal(
         return performWalApplication(
             walPath: walPath,
             dummyFile: dummyFile,
+            sourceFile: wallpaperPath,
             usedBackend: usedBackend,
             noPywalfox: noPywalfox,
             runPywalfox: config.runPywalfox,
@@ -343,6 +419,7 @@ func runWal(
         let result = performWalApplication(
             walPath: walPath,
             dummyFile: dummyFile,
+            sourceFile: wallpaperPath,
             usedBackend: usedBackend,
             noPywalfox: noPywalfox,
             runPywalfox: config.runPywalfox,
@@ -544,6 +621,7 @@ func runShellCommandOutput(_ command: String) -> String? {
 
 // MARK: - Commands
 
+@MainActor
 func cmdRandom(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransition: Bool = false, transitionType: TransitionType? = nil) {
     let wallpapers = discoverWallpapers()
     guard !wallpapers.isEmpty else {
@@ -555,9 +633,7 @@ func cmdRandom(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransit
     let wallpaper = wallpapers[randomIndex]
 
     print("Selected: \(wallpaper.name)")
-    let success = MainActor.assumeIsolated {
-        runWal(wallpaperPath: wallpaper.url.path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
-    }
+    let success = runWal(wallpaperPath: wallpaper.url.path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
 
     if success && !dryRun {
         var updatedConfig = AppConfig.load()
@@ -569,6 +645,7 @@ func cmdRandom(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransit
     exit(success ? 0 : 1)
 }
 
+@MainActor
 func cmdUpdate(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransition: Bool = false, transitionType: TransitionType? = nil) {
     let config = AppConfig.load()
     guard !config.lastSelectedWallpaperPath.isEmpty else {
@@ -584,12 +661,11 @@ func cmdUpdate(backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransit
 
     let name = URL(fileURLWithPath: path).lastPathComponent
     print("Updating colors for: \(name)")
-    let success = MainActor.assumeIsolated {
-        runWal(wallpaperPath: path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
-    }
+    let success = runWal(wallpaperPath: path, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
     exit(success ? 0 : 1)
 }
 
+@MainActor
 func cmdSet(path: String, backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, playTransition: Bool = false, transitionType: TransitionType? = nil) {
     let fullPath = (path as NSString).expandingTildeInPath
     guard FileManager.default.fileExists(atPath: fullPath) else {
@@ -599,9 +675,7 @@ func cmdSet(path: String, backend: WalBackend?, dryRun: Bool, noPywalfox: Bool, 
 
     let name = URL(fileURLWithPath: fullPath).lastPathComponent
     print("Setting wallpaper: \(name)")
-    let success = MainActor.assumeIsolated {
-        runWal(wallpaperPath: fullPath, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
-    }
+    let success = runWal(wallpaperPath: fullPath, backend: backend, dryRun: dryRun, noPywalfox: noPywalfox, playTransition: playTransition, transitionType: transitionType)
 
     if success && !dryRun {
         var updatedConfig = AppConfig.load()
@@ -669,6 +743,16 @@ private final class WalResultBox: @unchecked Sendable {
     var value: Bool {
         get { lock.lock(); defer { lock.unlock() }; return _value }
         set { lock.lock(); defer { lock.unlock() }; _value = newValue }
+    }
+}
+
+private final class BlockingResultBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _result: Result<Value, Error>?
+
+    var result: Result<Value, Error>? {
+        get { lock.lock(); defer { lock.unlock() }; return _result }
+        set { lock.lock(); defer { lock.unlock() }; _result = newValue }
     }
 }
 

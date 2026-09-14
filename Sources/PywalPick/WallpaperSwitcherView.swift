@@ -1114,84 +1114,106 @@ public struct WallpaperSwitcherView: View {
         // Kill WallpaperAgent to force macOS to reload wallpaper
         let _ = await runShellCommand("killall WallpaperAgent")
 
+        if usedBackend == .matugen {
+            do {
+                let result = try await MatugenThemeService.shared.generate(
+                    sourceURL: wallpaper.url,
+                    inputURL: dummyFileURL,
+                    config: settingsManager.config
+                )
+                print("✓ Matugen theme cache \(result.reused ? "reused" : "generated") in \(String(format: "%.2f", result.duration))s")
+                await finishSuccessfulThemeApplication(
+                    wallpaper: wallpaper,
+                    dummyFilePath: dummyFilePath,
+                    logPath: logPath,
+                    generatorLabel: "Matugen theme"
+                )
+                return
+            } catch {
+                print("⚠ Matugen failed: \(error.localizedDescription). Falling back to Schemer2.")
+            }
+        }
+
         // Run wal command with the selected wallpaper using configured backend
+        let walBackend = usedBackend == .matugen ? WalBackend.schemer2 : usedBackend
         let walCommand =
-            "\(settingsManager.config.walBinaryPath) -i \"\(dummyFilePath)\" -n --backend \(usedBackend.rawValue)"
+            "\(settingsManager.config.walBinaryPath) -i \"\(dummyFilePath)\" -n --backend \(walBackend.rawValue)"
         print("Running wal command: \(walCommand)")
         let walSuccess = await runShellCommand(walCommand)
 
         if walSuccess {
             print("✓ Wal command completed successfully")
-            // Wait a moment for wal to finish writing files
-            try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1 second
-
-            // Verify wal actually worked by checking if colors file was updated
-            let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
-            if fileManager.fileExists(atPath: walCachePath) {
-                let colorsContent = (try? String(
-                    contentsOfFile: walCachePath, encoding: .utf8)) ?? ""
-                let colorLines = colorsContent.components(separatedBy: .newlines).filter
-                { !$0.isEmpty && $0.hasPrefix("#") }
-                print("✓ Wal updated colors file with \(colorLines.count) colors")
-
-                // Set system accent color from wal colors
-                await setAccentColorFromWal()
-
-                // Run pywalfox update if enabled
-                if settingsManager.config.runPywalfox {
-                    print("Running pywalfox update...")
-                    let pywalfoxSuccess = await runShellCommand("pywalfox update")
-                    if pywalfoxSuccess {
-                        print("✓ Pywalfox update completed successfully")
-                    } else {
-                        print("✗ Pywalfox update failed")
-                    }
-                }
-
-                // Run custom shell script if configured
-                if !settingsManager.config.customScriptPath.isEmpty {
-                    print("Running custom script: \(settingsManager.config.customScriptPath)")
-                    let scriptSuccess = await runShellCommand(settingsManager.config.customScriptPath)
-                    if scriptSuccess {
-                        print("✓ Custom script completed successfully")
-                    } else {
-                        print("✗ Custom script failed")
-                    }
-                }
-            } else {
-                print("WARNING: Wal colors file not found after command")
-            }
-
-            await MainActor.run {
-                settingsManager.config.lastSelectedWallpaperPath = wallpaper.url.path
-
-                let finalMessage = """
-                    === Process Completed ===
-                    ✓ File copied to: \(dummyFilePath)
-                    ✓ WallpaperAgent killed
-                    ✓ Wal command executed
-                    ✓ Accent color updated from wal colors
-                    ===============================
-                    """
-
-                print("Wallpaper switching process completed")
-                print("✓ File copied to: \(dummyFilePath)")
-                print("✓ WallpaperAgent killed")
-                print("✓ Wal command executed")
-                print("✓ Accent color updated from wal colors")
-                print("===============================")
-
-                // Log completion to file
-                if var existingContent = try? String(
-                    contentsOfFile: logPath, encoding: .utf8)
-                {
-                    existingContent += "\n" + finalMessage
-                    try? existingContent.write(
-                        toFile: logPath, atomically: true, encoding: .utf8)
-                }
-            }
+            // Wait a moment for wal to finish writing files.
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await finishSuccessfulThemeApplication(
+                wallpaper: wallpaper,
+                dummyFilePath: dummyFilePath,
+                logPath: logPath,
+                generatorLabel: "Wal"
+            )
         } else {
             print("✗ Wal command failed")
+        }
+    }
+
+    private func finishSuccessfulThemeApplication(
+        wallpaper: ImageFile,
+        dummyFilePath: String,
+        logPath: String,
+        generatorLabel: String
+    ) async {
+        let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
+        guard let colorsContent = try? String(contentsOfFile: walCachePath, encoding: .utf8) else {
+            print("WARNING: Wal colors file not found after \(generatorLabel)")
+            return
+        }
+
+        let colorLines = colorsContent.components(separatedBy: .newlines).filter {
+            !$0.isEmpty && $0.hasPrefix("#")
+        }
+        guard colorLines.count >= 8 else {
+            print("WARNING: Wal colors file contains only \(colorLines.count) colors")
+            return
+        }
+
+        print("✓ \(generatorLabel) updated colors file with \(colorLines.count) colors")
+        await setAccentColorFromWal()
+
+        if settingsManager.config.runPywalfox {
+            print("Running pywalfox update...")
+            let pywalfoxSuccess = await runShellCommand("pywalfox update")
+            print(pywalfoxSuccess ? "✓ Pywalfox update completed successfully" : "✗ Pywalfox update failed")
+        }
+
+        if !settingsManager.config.customScriptPath.isEmpty {
+            print("Running custom script: \(settingsManager.config.customScriptPath)")
+            let scriptSuccess = await runShellCommand(settingsManager.config.customScriptPath)
+            print(scriptSuccess ? "✓ Custom script completed successfully" : "✗ Custom script failed")
+        }
+
+        await MainActor.run {
+            settingsManager.config.lastSelectedWallpaperPath = wallpaper.url.path
+
+            let finalMessage = """
+                === Process Completed ===
+                ✓ File copied to: \(dummyFilePath)
+                ✓ WallpaperAgent killed
+                ✓ \(generatorLabel) theme applied
+                ✓ Accent color updated from wal colors
+                ===============================
+                """
+
+            print("Wallpaper switching process completed")
+            print("✓ File copied to: \(dummyFilePath)")
+            print("✓ WallpaperAgent killed")
+            print("✓ \(generatorLabel) theme applied")
+            print("✓ Accent color updated from wal colors")
+            print("===============================")
+
+            if var existingContent = try? String(contentsOfFile: logPath, encoding: .utf8) {
+                existingContent += "\n" + finalMessage
+                try? existingContent.write(toFile: logPath, atomically: true, encoding: .utf8)
+            }
         }
     }
 

@@ -49,6 +49,7 @@ public enum WalBackend: String, CaseIterable, Identifiable, Codable, Sendable {
     case wal
     case okthief
     case colorthief
+    case matugen
 
     public var id: String { rawValue }
 
@@ -62,7 +63,40 @@ public enum WalBackend: String, CaseIterable, Identifiable, Codable, Sendable {
         case .wal: return "Wal"
         case .okthief: return "OKThief"
         case .colorthief: return "ColorThief"
+        case .matugen: return "Matugen (Material You)"
         }
+    }
+
+    public var isMatugen: Bool { self == .matugen }
+}
+
+public enum MatugenMode: String, CaseIterable, Codable, Identifiable, Sendable {
+    case dark
+    case light
+
+    public var id: String { rawValue }
+    public var displayName: String { rawValue.capitalized }
+}
+
+public enum MatugenSchemeType: String, CaseIterable, Codable, Identifiable, Sendable {
+    case schemeContent = "scheme-content"
+    case schemeExpressive = "scheme-expressive"
+    case schemeFidelity = "scheme-fidelity"
+    case schemeFruitSalad = "scheme-fruit-salad"
+    case schemeMonochrome = "scheme-monochrome"
+    case schemeNeutral = "scheme-neutral"
+    case schemeRainbow = "scheme-rainbow"
+    case schemeTonalSpot = "scheme-tonal-spot"
+    case schemeVibrant = "scheme-vibrant"
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        rawValue
+            .replacingOccurrences(of: "scheme-", with: "")
+            .split(separator: "-")
+            .map { $0.capitalized }
+            .joined(separator: " ")
     }
 }
 
@@ -138,6 +172,10 @@ public struct AppConfig: Codable, Sendable {
     public var wallhavenDefaultAtLeast: String
     public var wallhavenDefaultRatios: [String]
     public var wallhavenDefaultColor: String
+    public var matugenBinaryPath: String
+    public var matugenMode: MatugenMode
+    public var matugenSchemeType: MatugenSchemeType
+    public var matugenContrast: Double
 
     public static let `default` = AppConfig(
         wallpaperFolderPath: "",
@@ -163,7 +201,11 @@ public struct AppConfig: Codable, Sendable {
         wallhavenDefaultTopRange: "1M",
         wallhavenDefaultAtLeast: "",
         wallhavenDefaultRatios: [],
-        wallhavenDefaultColor: ""
+        wallhavenDefaultColor: "",
+        matugenBinaryPath: NSHomeDirectory() + "/.cargo/bin/matugen",
+        matugenMode: .dark,
+        matugenSchemeType: .schemeTonalSpot,
+        matugenContrast: 0
     )
 
     private static let configURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/PywalPick/config.json")
@@ -192,7 +234,11 @@ public struct AppConfig: Codable, Sendable {
         wallhavenDefaultTopRange: String = "1M",
         wallhavenDefaultAtLeast: String = "",
         wallhavenDefaultRatios: [String] = [],
-        wallhavenDefaultColor: String = ""
+        wallhavenDefaultColor: String = "",
+        matugenBinaryPath: String = NSHomeDirectory() + "/.cargo/bin/matugen",
+        matugenMode: MatugenMode = .dark,
+        matugenSchemeType: MatugenSchemeType = .schemeTonalSpot,
+        matugenContrast: Double = 0
     ) {
         self.wallpaperFolderPath = wallpaperFolderPath
         self.dummyWallpaperFile = dummyWallpaperFile
@@ -218,6 +264,10 @@ public struct AppConfig: Codable, Sendable {
         self.wallhavenDefaultAtLeast = wallhavenDefaultAtLeast
         self.wallhavenDefaultRatios = wallhavenDefaultRatios
         self.wallhavenDefaultColor = wallhavenDefaultColor
+        self.matugenBinaryPath = matugenBinaryPath
+        self.matugenMode = matugenMode
+        self.matugenSchemeType = matugenSchemeType
+        self.matugenContrast = min(max(matugenContrast, -1), 1)
     }
 
     public init(from decoder: Decoder) throws {
@@ -247,6 +297,10 @@ public struct AppConfig: Codable, Sendable {
         wallhavenDefaultAtLeast = try c.decodeIfPresent(String.self, forKey: .wallhavenDefaultAtLeast) ?? d.wallhavenDefaultAtLeast
         wallhavenDefaultRatios = try c.decodeIfPresent([String].self, forKey: .wallhavenDefaultRatios) ?? d.wallhavenDefaultRatios
         wallhavenDefaultColor = try c.decodeIfPresent(String.self, forKey: .wallhavenDefaultColor) ?? d.wallhavenDefaultColor
+        matugenBinaryPath = try c.decodeIfPresent(String.self, forKey: .matugenBinaryPath) ?? d.matugenBinaryPath
+        matugenMode = try c.decodeIfPresent(MatugenMode.self, forKey: .matugenMode) ?? d.matugenMode
+        matugenSchemeType = try c.decodeIfPresent(MatugenSchemeType.self, forKey: .matugenSchemeType) ?? d.matugenSchemeType
+        matugenContrast = min(max(try c.decodeIfPresent(Double.self, forKey: .matugenContrast) ?? d.matugenContrast, -1), 1)
     }
 
     public static func load() -> AppConfig {
