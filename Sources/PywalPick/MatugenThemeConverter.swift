@@ -17,6 +17,11 @@ enum MatugenThemeError: LocalizedError, Sendable {
     }
 }
 
+struct MatugenThemeAccent: Sendable, Equatable {
+    let primary: String
+    let onPrimary: String
+}
+
 struct MatugenThemeConverter {
     private struct Tone: Decodable {
         let color: String
@@ -50,7 +55,6 @@ struct MatugenThemeConverter {
         ("color4", "base0d"),
         ("color5", "base0e"),
         ("color6", "base0c"),
-        ("color7", "base05"),
         ("color8", "base03"),
         ("color9", "base08"),
         ("color10", "base0b"),
@@ -58,7 +62,6 @@ struct MatugenThemeConverter {
         ("color12", "base0d"),
         ("color13", "base0e"),
         ("color14", "base0c"),
-        ("color15", "base07"),
     ]
 
     static func makePywalScheme(
@@ -91,6 +94,17 @@ struct MatugenThemeConverter {
 
         let background = try color(named: "surface", from: materialColors, mode: mode)
         let foreground = try color(named: "on_surface", from: materialColors, mode: mode)
+        let accent = try materialAccent(from: materialColors, mode: mode)
+        pywalColors["color7"] = try color(
+            named: "surface_container_highest",
+            from: materialColors,
+            mode: mode
+        )
+        pywalColors["color15"] = try color(
+            named: "on_background",
+            from: materialColors,
+            mode: mode
+        )
 
         let scheme: [String: Any] = [
             "wallpaper": wallpaperPath,
@@ -98,7 +112,7 @@ struct MatugenThemeConverter {
             "special": [
                 "background": background,
                 "foreground": foreground,
-                "cursor": foreground,
+                "cursor": accent.primary,
             ],
             "colors": pywalColors,
         ]
@@ -113,6 +127,57 @@ struct MatugenThemeConverter {
         }
     }
 
+    static func applyGeneratedThemeOverrides(
+        at directory: URL,
+        primary: String,
+        onPrimary: String
+    ) throws {
+        let tilixURL = directory.appendingPathComponent("colors-tilix.json")
+        guard FileManager.default.fileExists(atPath: tilixURL.path) else { return }
+
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: Data(contentsOf: tilixURL))
+        } catch {
+            throw MatugenThemeError.invalidJSON(error.localizedDescription)
+        }
+        guard var theme = object as? [String: Any] else {
+            throw MatugenThemeError.invalidJSON("Tilix theme is not a JSON object")
+        }
+
+        theme["cursor-foreground-color"] = primary
+        theme["highlight-background-color"] = primary
+        theme["highlight-foreground-color"] = onPrimary
+        theme["use-cursor-color"] = true
+        theme["use-highlight-color"] = true
+
+        do {
+            let data = try JSONSerialization.data(
+                withJSONObject: theme,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try data.write(to: tilixURL, options: .atomic)
+        } catch {
+            throw MatugenThemeError.invalidJSON(error.localizedDescription)
+        }
+    }
+
+    static func materialAccent(
+        from data: Data,
+        mode: MatugenMode
+    ) throws -> MatugenThemeAccent {
+        let payload: MatugenPayload
+        do {
+            payload = try JSONDecoder().decode(MatugenPayload.self, from: data)
+        } catch {
+            throw MatugenThemeError.invalidJSON(error.localizedDescription)
+        }
+        guard let materialColors = payload.colors else {
+            throw MatugenThemeError.missingColor("colors")
+        }
+        return try materialAccent(from: materialColors, mode: mode)
+    }
+
     private static func color(
         named name: String,
         from colors: [String: PaletteColor],
@@ -125,6 +190,16 @@ struct MatugenThemeConverter {
             throw MatugenThemeError.invalidColor(name, value)
         }
         return value.lowercased()
+    }
+
+    private static func materialAccent(
+        from colors: [String: PaletteColor],
+        mode: MatugenMode
+    ) throws -> MatugenThemeAccent {
+        MatugenThemeAccent(
+            primary: try color(named: "primary", from: colors, mode: mode),
+            onPrimary: try color(named: "on_primary", from: colors, mode: mode)
+        )
     }
 
     private static func isHexColor(_ value: String) -> Bool {

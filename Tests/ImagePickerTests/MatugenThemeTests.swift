@@ -52,7 +52,11 @@ final class MatugenThemeTests: XCTestCase {
                   },
                   "colors": {
                     "surface": {"dark": {"color": "#101010"}},
-                    "on_surface": {"dark": {"color": "#f0f0f0"}}
+                    "on_surface": {"dark": {"color": "#f0f0f0"}},
+                    "on_background": {"dark": {"color": "#eeeeee"}},
+                    "surface_container_highest": {"dark": {"color": "#202020"}},
+                    "primary": {"dark": {"color": "#0088ff"}},
+                    "on_primary": {"dark": {"color": "#001122"}}
                   }
                 }
                 """.utf8
@@ -70,13 +74,48 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertEqual(object["wallpaper"] as? String, "/tmp/dummy.jpg")
         XCTAssertEqual(special["background"], "#101010")
         XCTAssertEqual(special["foreground"], "#f0f0f0")
-        XCTAssertEqual(special["cursor"], "#f0f0f0")
+        XCTAssertEqual(special["cursor"], "#0088ff")
         XCTAssertEqual(colors["color0"], "#100000")
         XCTAssertEqual(colors["color1"], "#800000")
         XCTAssertEqual(colors["color2"], "#b00000")
-        XCTAssertEqual(colors["color7"], "#500000")
+        XCTAssertEqual(colors["color7"], "#202020")
         XCTAssertEqual(colors["color8"], "#300000")
-        XCTAssertEqual(colors["color15"], "#700000")
+        XCTAssertEqual(colors["color15"], "#eeeeee")
+    }
+
+    func testAppliesMaterialAccentToGeneratedTilixHighlight() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pywalpick-tilix-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let tilixURL = directory.appendingPathComponent("colors-tilix.json")
+        let original: [String: Any] = [
+            "cursor-background-color": "#101010",
+            "cursor-foreground-color": "#f0f0f0",
+            "foreground-color": "#f0f0f0",
+            "highlight-background-color": "#101010",
+            "highlight-foreground-color": "#f0f0f0",
+            "use-cursor-color": false,
+            "use-highlight-color": false,
+        ]
+        try JSONSerialization.data(withJSONObject: original, options: [])
+            .write(to: tilixURL)
+
+        try MatugenThemeConverter.applyGeneratedThemeOverrides(
+            at: directory,
+            primary: "#0088ff",
+            onPrimary: "#001122"
+        )
+
+        let updated = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: tilixURL)) as? [String: Any]
+        )
+        XCTAssertEqual(updated["highlight-background-color"] as? String, "#0088ff")
+        XCTAssertEqual(updated["highlight-foreground-color"] as? String, "#001122")
+        XCTAssertEqual(updated["cursor-foreground-color"] as? String, "#0088ff")
+        XCTAssertEqual(updated["use-highlight-color"] as? Bool, true)
+        XCTAssertEqual(updated["use-cursor-color"] as? Bool, true)
     }
 
     func testRejectsMatugenJsonWithoutRequiredPalette() {
@@ -123,6 +162,14 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertTrue(fileManager.fileExists(atPath: pywalCache.appendingPathComponent("colors").path))
         XCTAssertTrue(fileManager.fileExists(atPath: pywalCache.appendingPathComponent("matugen-colors.json").path))
         XCTAssertTrue(fileManager.fileExists(atPath: pywalCache.appendingPathComponent("pywalpick-matugen-manifest.json").path))
+        let tilix = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: pywalCache.appendingPathComponent("colors-tilix.json"))
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(tilix["highlight-background-color"] as? String, "#0088ff")
+        XCTAssertEqual(tilix["highlight-foreground-color"] as? String, "#001122")
+        XCTAssertEqual(tilix["use-highlight-color"] as? Bool, true)
 
         let second = try await service.generate(
             sourceURL: sourceURL,
@@ -251,7 +298,11 @@ final class MatugenThemeTests: XCTestCase {
       },
       "colors": {
         "surface": {"dark": {"color": "#101010"}},
-        "on_surface": {"dark": {"color": "#f0f0f0"}}
+        "on_surface": {"dark": {"color": "#f0f0f0"}},
+        "on_background": {"dark": {"color": "#eeeeee"}},
+        "surface_container_highest": {"dark": {"color": "#202020"}},
+        "primary": {"dark": {"color": "#0088ff"}},
+        "on_primary": {"dark": {"color": "#001122"}}
       }
     }
     """
@@ -287,6 +338,17 @@ private actor RecordingThemeProcessRunner: ThemeProcessRunning {
         try colors.write(to: directory.appendingPathComponent("colors"), atomically: true, encoding: .utf8)
         try "{\"colors\": {}}".write(to: directory.appendingPathComponent("colors.json"), atomically: true, encoding: .utf8)
         try "color0='0x000000'".write(to: directory.appendingPathComponent("colors.sh"), atomically: true, encoding: .utf8)
+        let tilix: [String: Any] = [
+            "cursor-background-color": "#101010",
+            "cursor-foreground-color": "#f0f0f0",
+            "foreground-color": "#f0f0f0",
+            "highlight-background-color": "#101010",
+            "highlight-foreground-color": "#f0f0f0",
+            "use-cursor-color": false,
+            "use-highlight-color": false,
+        ]
+        let tilixData = try JSONSerialization.data(withJSONObject: tilix, options: [])
+        try tilixData.write(to: directory.appendingPathComponent("colors-tilix.json"))
         return ThemeProcessOutput(exitCode: 0, output: "")
     }
 }

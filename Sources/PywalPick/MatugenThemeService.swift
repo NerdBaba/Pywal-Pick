@@ -270,6 +270,16 @@ public actor MatugenThemeService {
             throw MatugenThemeServiceError.processFailed(walOutput.output)
         }
 
+        let accent = try MatugenThemeConverter.materialAccent(
+            from: matugenJSON,
+            mode: config.matugenMode
+        )
+        try MatugenThemeConverter.applyGeneratedThemeOverrides(
+            at: stagingDirectory,
+            primary: accent.primary,
+            onPrimary: accent.onPrimary
+        )
+
         try validateGeneratedCache(at: stagingDirectory)
         try matugenJSON.write(
             to: stagingDirectory.appendingPathComponent(Self.rawMatugenColorsName),

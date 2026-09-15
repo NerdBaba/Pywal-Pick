@@ -123,8 +123,10 @@ The service owns:
 
 ### Matugen-to-pywal mapping
 
-Matugen’s `--base16-backend wal` is the source of the 16 terminal colors. The
-scheme converter maps standard Base16 roles into pywal’s ANSI slots:
+Matugen’s `--base16-backend wal` supplies the terminal palette. The scheme
+converter maps standard Base16 roles into pywal’s ANSI slots, while using
+Material surface roles for the lightest foreground/background pair so browser
+and selection consumers retain readable contrast:
 
 | pywal slot | Base16 role |
 | --- | --- |
@@ -135,7 +137,7 @@ scheme converter maps standard Base16 roles into pywal’s ANSI slots:
 | color4 | base0D |
 | color5 | base0E |
 | color6 | base0C |
-| color7 | base05 |
+| color7 | surface_container_highest |
 | color8 | base03 |
 | color9 | base08 |
 | color10 | base0B |
@@ -143,14 +145,16 @@ scheme converter maps standard Base16 roles into pywal’s ANSI slots:
 | color12 | base0D |
 | color13 | base0E |
 | color14 | base0C |
-| color15 | base07 |
+| color15 | on_background |
 
 The pywal `special` values use Matugen’s selected-mode `surface` for
-`background` and `on_surface` for both `foreground` and `cursor`. The emitted
-scheme also records the dummy wallpaper path and alpha `100`, matching pywal’s
-native `colors.json` contract. The unmodified Matugen JSON is published as
-`~/.cache/wal/matugen-colors.json` so all Material roles and Base16 values
-remain available without lossy conversion.
+`background`, `on_surface` for `foreground`, and `primary` for `cursor`. The
+generated Tilix theme receives the same Material `primary`/`on_primary` pair
+for its highlight colors and explicitly enables those colors. The emitted
+scheme also records the dummy wallpaper path and alpha `100`, matching
+pywal’s native `colors.json` contract. The unmodified Matugen JSON is
+published as `~/.cache/wal/matugen-colors.json` so all Material roles and
+Base16 values remain available without lossy conversion.
 
 ### Cache publication
 
