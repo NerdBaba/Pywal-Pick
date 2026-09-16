@@ -126,3 +126,70 @@ struct MatugenPaletteDocument: Sendable, Equatable {
         return "#" + digits.lowercased()
     }
 }
+
+struct MatugenPaletteGenerationInfo: Codable, Sendable, Equatable {
+    let sourcePath: String
+    let mode: MatugenMode
+    let schemeType: MatugenSchemeType
+    let contrast: Double
+}
+
+struct MatugenPaletteSnapshot: Sendable, Equatable {
+    let document: MatugenPaletteDocument
+    let generationInfo: MatugenPaletteGenerationInfo?
+}
+
+enum MatugenPaletteCacheError: LocalizedError, Sendable {
+    case missingPalette(URL)
+    case invalidPalette(String)
+    case invalidMetadata(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingPalette(let url):
+            return "No generated Matugen palette was found at \(url.path)."
+        case .invalidPalette(let message):
+            return "The generated Matugen palette could not be read: \(message)"
+        case .invalidMetadata(let message):
+            return "The generated Matugen metadata could not be read: \(message)"
+        }
+    }
+}
+
+enum MatugenPaletteCache {
+    static let rawColorsFileName = "matugen-colors.json"
+    static let manifestFileName = "pywalpick-matugen-manifest.json"
+    static let defaultDirectory = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent(".cache/wal", isDirectory: true)
+
+    static func load(from directory: URL = defaultDirectory) throws -> MatugenPaletteSnapshot {
+        let colorsURL = directory.appendingPathComponent(rawColorsFileName)
+        guard FileManager.default.fileExists(atPath: colorsURL.path) else {
+            throw MatugenPaletteCacheError.missingPalette(colorsURL)
+        }
+
+        let document: MatugenPaletteDocument
+        do {
+            document = try MatugenPaletteDocument(data: Data(contentsOf: colorsURL))
+        } catch {
+            throw MatugenPaletteCacheError.invalidPalette(error.localizedDescription)
+        }
+
+        let manifestURL = directory.appendingPathComponent(manifestFileName)
+        let generationInfo: MatugenPaletteGenerationInfo?
+        if FileManager.default.fileExists(atPath: manifestURL.path) {
+            do {
+                generationInfo = try JSONDecoder().decode(
+                    MatugenPaletteGenerationInfo.self,
+                    from: Data(contentsOf: manifestURL)
+                )
+            } catch {
+                throw MatugenPaletteCacheError.invalidMetadata(error.localizedDescription)
+            }
+        } else {
+            generationInfo = nil
+        }
+
+        return MatugenPaletteSnapshot(document: document, generationInfo: generationInfo)
+    }
+}

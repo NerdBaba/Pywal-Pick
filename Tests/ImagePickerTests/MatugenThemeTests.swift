@@ -226,6 +226,59 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertEqual(callsAfterConfigurationChange, 4)
     }
 
+    func testThemeServiceSupportsEveryConfiguredModeAndScheme() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("pywalpick-matugen-matrix-\(UUID().uuidString)", isDirectory: true)
+        let cacheRoot = root.appendingPathComponent("cache", isDirectory: true)
+        let pywalCache = root.appendingPathComponent("wal", isDirectory: true)
+        let configDirectory = root.appendingPathComponent("config", isDirectory: true)
+        let sourceURL = root.appendingPathComponent("wallpaper.jpg")
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("wallpaper fixture".utf8).write(to: sourceURL)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let runner = RecordingThemeProcessRunner(matugenOutput: Self.matugenFixture)
+        let service = MatugenThemeService(
+            processRunner: runner,
+            cacheRoot: cacheRoot,
+            pywalCacheDirectory: pywalCache,
+            configDirectory: configDirectory
+        )
+        var config = AppConfig.default
+        config.matugenBinaryPath = "/bin/sh"
+        config.walBinaryPath = "/bin/sh"
+
+        for mode in MatugenMode.allCases {
+            for schemeType in MatugenSchemeType.allCases {
+                config.matugenMode = mode
+                config.matugenSchemeType = schemeType
+                let result = try await service.generate(
+                    sourceURL: sourceURL,
+                    inputURL: sourceURL,
+                    config: config
+                )
+                XCTAssertFalse(result.reused, "Unexpected cache reuse for \(mode)/\(schemeType)")
+
+                let snapshot = try MatugenPaletteCache.load(from: pywalCache)
+                XCTAssertEqual(snapshot.document.semanticColors.count, 50)
+                XCTAssertEqual(snapshot.document.base16Colors.count, 16)
+                XCTAssertEqual(snapshot.document.tonalPalettes.count, 6)
+                let generationInfo = try XCTUnwrap(snapshot.generationInfo)
+                XCTAssertEqual(generationInfo.mode, mode)
+                XCTAssertEqual(generationInfo.schemeType, schemeType)
+                XCTAssertEqual(generationInfo.contrast, config.matugenContrast)
+                XCTAssertNotNil(snapshot.document.semanticColors["surface"]?.value(for: mode))
+                XCTAssertNotNil(snapshot.document.semanticColors["on_surface"]?.value(for: mode))
+                XCTAssertNotNil(snapshot.document.semanticColors["primary"]?.value(for: mode))
+                XCTAssertNotNil(snapshot.document.semanticColors["on_primary"]?.value(for: mode))
+            }
+        }
+
+        let calls = await runner.callCount
+        XCTAssertEqual(calls, MatugenMode.allCases.count * MatugenSchemeType.allCases.count * 2)
+    }
+
     func testInstalledMatugenAndWalGenerateARealCache() async throws {
         let matugenPath = AppConfig.default.matugenBinaryPath
         let walPath = AppConfig.default.walBinaryPath
@@ -275,6 +328,65 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertTrue(second.reused)
     }
 
+    func testInstalledMatugenAndWalSupportEveryConfiguredVariant() async throws {
+        let matugenPath = AppConfig.default.matugenBinaryPath
+        let walPath = AppConfig.default.walBinaryPath
+        try XCTSkipUnless(
+            FileManager.default.isExecutableFile(atPath: matugenPath)
+                && FileManager.default.isExecutableFile(atPath: walPath),
+            "Local Matugen and wal binaries are not installed"
+        )
+
+        let sourceURL = URL(fileURLWithPath: "/Volumes/NightSky/babaisalive/Pictures/dummy-file.jpg")
+        try XCTSkipUnless(
+            FileManager.default.fileExists(atPath: sourceURL.path),
+            "Local wallpaper fixture is not available"
+        )
+
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("pywalpick-matugen-real-matrix-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        var config = AppConfig.default
+        config.matugenBinaryPath = matugenPath
+        config.walBinaryPath = walPath
+        let service = MatugenThemeService(
+            cacheRoot: root.appendingPathComponent("cache", isDirectory: true),
+            pywalCacheDirectory: root.appendingPathComponent("wal", isDirectory: true),
+            configDirectory: root.appendingPathComponent("config", isDirectory: true)
+        )
+
+        for mode in MatugenMode.allCases {
+            for schemeType in MatugenSchemeType.allCases {
+                config.matugenMode = mode
+                config.matugenSchemeType = schemeType
+                let result = try await service.generate(
+                    sourceURL: sourceURL,
+                    inputURL: sourceURL,
+                    config: config
+                )
+                XCTAssertFalse(result.reused, "Unexpected reuse for \(mode)/\(schemeType)")
+
+                let snapshot = try MatugenPaletteCache.load(from: result.cacheDirectory)
+                XCTAssertEqual(snapshot.document.semanticColors.count, 50)
+                XCTAssertEqual(snapshot.document.base16Colors.count, 16)
+                XCTAssertEqual(snapshot.document.tonalPalettes.count, 6)
+                XCTAssertEqual(snapshot.generationInfo?.mode, mode)
+                XCTAssertEqual(snapshot.generationInfo?.schemeType, schemeType)
+                let colors = try String(
+                    contentsOf: result.cacheDirectory.appendingPathComponent("colors"),
+                    encoding: .utf8
+                )
+                XCTAssertGreaterThanOrEqual(
+                    colors.split(whereSeparator: \.isNewline).filter { $0.hasPrefix("#") }.count,
+                    16
+                )
+            }
+        }
+    }
+
     func testMalformedMatugenOutputLeavesExistingPywalCacheUntouched() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
@@ -317,30 +429,67 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
-    private static let matugenFixture = """
-    {
-      "base16": {
-        "base00": {"dark": {"color": "#100000"}},
-        "base03": {"dark": {"color": "#300000"}},
-        "base05": {"dark": {"color": "#500000"}},
-        "base07": {"dark": {"color": "#700000"}},
-        "base08": {"dark": {"color": "#800000"}},
-        "base0a": {"dark": {"color": "#a00000"}},
-        "base0b": {"dark": {"color": "#b00000"}},
-        "base0c": {"dark": {"color": "#c00000"}},
-        "base0d": {"dark": {"color": "#d00000"}},
-        "base0e": {"dark": {"color": "#e00000"}}
-      },
-      "colors": {
-        "surface": {"dark": {"color": "#101010"}},
-        "on_surface": {"dark": {"color": "#f0f0f0"}},
-        "on_background": {"dark": {"color": "#eeeeee"}},
-        "surface_container_highest": {"dark": {"color": "#202020"}},
-        "primary": {"dark": {"color": "#0088ff"}},
-        "on_primary": {"dark": {"color": "#001122"}}
-      }
-    }
-    """
+    private static let matugenFixture: String = {
+        let roleNames = [
+            "background", "error", "error_container", "inverse_on_surface", "inverse_primary",
+            "inverse_surface", "on_background", "on_error", "on_error_container", "on_primary",
+            "on_primary_container", "on_primary_fixed", "on_primary_fixed_variant", "on_secondary",
+            "on_secondary_container", "on_secondary_fixed", "on_secondary_fixed_variant", "on_surface",
+            "on_surface_variant", "on_tertiary", "on_tertiary_container", "on_tertiary_fixed",
+            "on_tertiary_fixed_variant", "outline", "outline_variant", "primary", "primary_container",
+            "primary_fixed", "primary_fixed_dim", "scrim", "secondary", "secondary_container",
+            "secondary_fixed", "secondary_fixed_dim", "shadow", "source_color", "surface", "surface_bright",
+            "surface_container", "surface_container_high", "surface_container_highest", "surface_container_low",
+            "surface_container_lowest", "surface_dim", "surface_tint", "surface_variant", "tertiary",
+            "tertiary_container", "tertiary_fixed", "tertiary_fixed_dim",
+        ]
+        let base16Names = (0..<16).map { String(format: "base%02x", $0) }
+        let toneNames = ["0", "5", "10", "15", "20", "25", "30", "35", "40", "50", "60", "70", "80", "90", "95", "98", "99", "100"]
+
+        var colors: [String: Any] = [:]
+        for (index, name) in roleNames.enumerated() {
+            colors[name] = [
+                "dark": ["color": String(format: "#%06x", 0x100000 + index)],
+                "default": ["color": String(format: "#%06x", 0x100000 + index)],
+                "light": ["color": String(format: "#%06x", 0x200000 + index)],
+            ]
+        }
+        colors["surface"] = ["dark": ["color": "#101010"], "light": ["color": "#fefefe"]]
+        colors["on_surface"] = ["dark": ["color": "#f0f0f0"], "light": ["color": "#101010"]]
+        colors["on_background"] = ["dark": ["color": "#eeeeee"], "light": ["color": "#101010"]]
+        colors["surface_container_highest"] = ["dark": ["color": "#202020"], "light": ["color": "#dddddd"]]
+        colors["primary"] = ["dark": ["color": "#0088ff"], "light": ["color": "#445566"]]
+        colors["on_primary"] = ["dark": ["color": "#001122"], "light": ["color": "#ffffff"]]
+
+        var base16: [String: Any] = [:]
+        for (index, name) in base16Names.enumerated() {
+            base16[name] = [
+                "dark": ["color": String(format: "#%06x", 0x300000 + index)],
+                "default": ["color": String(format: "#%06x", 0x300000 + index)],
+                "light": ["color": String(format: "#%06x", 0x400000 + index)],
+            ]
+        }
+
+        var palettes: [String: Any] = [:]
+        for (familyIndex, family) in ["error", "neutral", "neutral_variant", "primary", "secondary", "tertiary"].enumerated() {
+            var tones: [String: Any] = [:]
+            for (toneIndex, tone) in toneNames.enumerated() {
+                tones[tone] = ["color": String(format: "#%06x", 0x500000 + familyIndex * 0x1000 + toneIndex)]
+            }
+            palettes[family] = tones
+        }
+
+        let object: [String: Any] = [
+            "mode": "dark",
+            "is_dark_mode": true,
+            "image": "/tmp/wallpaper.jpg",
+            "base16": base16,
+            "colors": colors,
+            "palettes": palettes,
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
+    }()
 
     private static func legacyMatugenFixture(primary: String = "112233") -> Data {
         let base16Names = [
