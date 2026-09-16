@@ -179,8 +179,18 @@ struct MatugenThemeConverter {
     private static func isHexColor(_ value: String) -> Bool {
         let characters = Array(value)
         guard characters.count == 7, characters[0] == "#" else { return false }
-        return characters.dropFirst().allSatisfy {
-            $0.isNumber || ("a"..."f").contains($0.lowercased())
+        return characters.dropFirst().allSatisfy { character in
+            guard character.unicodeScalars.count == 1,
+                  let scalar = character.unicodeScalars.first
+            else {
+                return false
+            }
+            switch scalar.value {
+            case 48...57, 65...70, 97...102:
+                return true
+            default:
+                return false
+            }
         }
     }
 }

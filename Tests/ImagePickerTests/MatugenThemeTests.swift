@@ -163,6 +163,20 @@ final class MatugenThemeTests: XCTestCase {
         }
     }
 
+    func testRejectsNonASCIINumeralsInRequiredHexColor() {
+        XCTAssertThrowsError(
+            try MatugenThemeConverter.makePywalScheme(
+                from: Self.legacyMatugenFixture(primary: "#１２３４５６"),
+                wallpaperPath: "/tmp/dummy.jpg",
+                mode: .dark
+            )
+        ) { error in
+            guard case MatugenThemeError.invalidColor("primary", "#１２３４５６") = error else {
+                return XCTFail("Expected invalidColor for non-ASCII hex digits, got \(error)")
+            }
+        }
+    }
+
     func testThemeServicePublishesPywalCacheAndReusesIt() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory

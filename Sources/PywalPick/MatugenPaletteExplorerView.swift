@@ -209,16 +209,26 @@ public struct MatugenPaletteExplorerView: View {
 
     private var semanticSection: some View {
         paletteSection(title: "Material roles", count: model.filteredSemanticColors.count) {
-            ForEach(model.filteredSemanticColors) { color in
-                colorRow(color)
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: UIStyle.spaceSM) {
+                    ForEach(model.filteredSemanticColors) { color in
+                        colorRow(color)
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
 
     private var base16Section: some View {
         paletteSection(title: "Base16 / pywal", count: model.filteredBase16Colors.count) {
-            ForEach(model.filteredBase16Colors) { color in
-                colorRow(color)
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: UIStyle.spaceSM) {
+                    ForEach(model.filteredBase16Colors) { color in
+                        colorRow(color)
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
@@ -279,7 +289,7 @@ public struct MatugenPaletteExplorerView: View {
             ForEach(model.additionalVariants, id: \.self) { variant in
                 valueCell(
                     label: variant.replacingOccurrences(of: "_", with: " ").capitalized,
-                    value: color.value(for: variant)
+                    value: color.variants[variant]
                 )
             }
         }

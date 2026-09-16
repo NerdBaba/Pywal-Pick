@@ -94,8 +94,12 @@ struct MatugenPaletteDocument: Sendable, Equatable {
             }
             return (variant, group)
         }
+        let modeKeys = Set(["dark", "light", "default"])
         let hasGroupedShape = groupedVariants.contains { variant, _ in
-            variant == "dark" || variant == "light"
+            modeKeys.contains(variant)
+        } || groupedVariants.allSatisfy { variant, group in
+            !modeKeys.contains(variant)
+                && !group.keys.contains(where: { modeKeys.contains($0) })
         }
         if hasGroupedShape {
             var groupedColors: [String: [String: String]] = [:]
@@ -124,8 +128,11 @@ struct MatugenPaletteDocument: Sendable, Equatable {
         guard let dictionary = rawValue as? [String: Any] else { return nil }
 
         var variants: [String: String] = [:]
-        if let direct = normalizedString(from: dictionary["color"] ?? dictionary["hex"] ?? dictionary["value"]) {
-            variants["default"] = direct
+        for key in ["color", "hex", "value"] {
+            if let direct = normalizedString(from: dictionary[key]) {
+                variants["default"] = direct
+                break
+            }
         }
         for (variant, value) in dictionary {
             guard variant != "color", variant != "hex", variant != "value",
@@ -153,14 +160,11 @@ struct MatugenPaletteDocument: Sendable, Equatable {
             return normalizeColorString(string)
         }
         if let dictionary = value as? [String: Any] {
-            if let color = dictionary["color"] as? String {
-                return normalizeColorString(color)
-            }
-            if let hex = dictionary["hex"] as? String {
-                return normalizeColorString(hex)
-            }
-            if let nestedDefault = dictionary["default"] {
-                return normalizedString(from: nestedDefault)
+            for key in ["color", "hex", "value", "default"] {
+                if let nestedValue = dictionary[key],
+                   let normalized = normalizedString(from: nestedValue) {
+                    return normalized
+                }
             }
         }
         return nil

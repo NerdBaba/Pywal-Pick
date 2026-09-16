@@ -106,6 +106,24 @@ final class MatugenPaletteDocumentTests: XCTestCase {
         XCTAssertTrue(document.availableVariants.contains("high_contrast"))
     }
 
+    func testDecodesValueWrappedColorsAndAStandaloneNamedVariantGroup() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "colors": [
+                "amoled": [
+                    "surface": ["value": "#000000"],
+                    "primary": ["value": "112233"],
+                ],
+            ],
+        ])
+
+        let document = try MatugenPaletteDocument(data: data)
+
+        XCTAssertEqual(document.semanticColors.count, 2)
+        XCTAssertEqual(document.semanticColors["surface"]?.value(for: "amoled"), "#000000")
+        XCTAssertEqual(document.semanticColors["primary"]?.value(for: "amoled"), "#112233")
+        XCTAssertEqual(document.availableVariants, ["amoled"])
+    }
+
     func testRejectsNonObjectJson() {
         XCTAssertThrowsError(try MatugenPaletteDocument(data: Data("[]".utf8)))
     }
