@@ -19,15 +19,24 @@ struct MatugenPaletteColor: Sendable, Equatable, Identifiable {
     let dark: String?
     let light: String?
     let defaultValue: String?
+    let variants: [String: String]
 
     func value(for mode: MatugenMode) -> String? {
-        switch mode {
-        case .dark:
-            return dark ?? defaultValue ?? light
-        case .light:
-            return light ?? defaultValue ?? dark
-        }
+        value(for: mode.rawValue)
     }
+
+    func value(for variant: String) -> String? {
+        variants[variant] ?? defaultValue ?? dark ?? light
+    }
+
+    fileprivate init(id: String, variants: [String: String]) {
+        self.id = id
+        self.variants = variants
+        self.dark = variants["dark"]
+        self.light = variants["light"]
+        self.defaultValue = variants["default"]
+    }
+
 }
 
 struct MatugenPaletteDocument: Sendable, Equatable {
@@ -37,6 +46,20 @@ struct MatugenPaletteDocument: Sendable, Equatable {
     let semanticColors: [String: MatugenPaletteColor]
     let base16Colors: [String: MatugenPaletteColor]
     let tonalPalettes: [String: [String: String]]
+
+    var availableVariants: [String] {
+        let variants = semanticColors.values.flatMap(\.variants.keys)
+            + base16Colors.values.flatMap(\.variants.keys)
+        return Array(Set(variants)).sorted { lhs, rhs in
+            let priority: [String: Int] = ["dark": 0, "light": 1, "default": 2]
+            let leftPriority = priority[lhs] ?? 3
+            let rightPriority = priority[rhs] ?? 3
+            if leftPriority != rightPriority {
+                return leftPriority < rightPriority
+            }
+            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
+    }
 
     init(data: Data) throws {
         let root: [String: Any]
@@ -62,7 +85,32 @@ struct MatugenPaletteDocument: Sendable, Equatable {
     }
 
     private static func parseColorMap(_ values: [String: Any]) -> [String: MatugenPaletteColor] {
-        Dictionary(uniqueKeysWithValues: values.compactMap { key, rawValue in
+        let groupedVariants = values.compactMap { variant, rawValue -> (String, [String: Any])? in
+            guard let group = rawValue as? [String: Any],
+                  !group.keys.contains(where: { ["color", "hex", "value"].contains($0) }),
+                  group.values.contains(where: { normalizedString(from: $0) != nil })
+            else {
+                return nil
+            }
+            return (variant, group)
+        }
+        let hasGroupedShape = groupedVariants.contains { variant, _ in
+            variant == "dark" || variant == "light"
+        }
+        if hasGroupedShape {
+            var groupedColors: [String: [String: String]] = [:]
+            for (variant, group) in groupedVariants {
+                for (name, rawValue) in group {
+                    guard let color = normalizedString(from: rawValue) else { continue }
+                    groupedColors[name, default: [:]][variant] = color
+                }
+            }
+            return groupedColors.reduce(into: [:]) { result, item in
+                result[item.key] = MatugenPaletteColor(id: item.key, variants: item.value)
+            }
+        }
+
+        return Dictionary(uniqueKeysWithValues: values.compactMap { key, rawValue in
             guard let color = parseColor(rawValue, id: key) else { return nil }
             return (key, color)
         })
@@ -70,23 +118,26 @@ struct MatugenPaletteDocument: Sendable, Equatable {
 
     private static func parseColor(_ rawValue: Any, id: String) -> MatugenPaletteColor? {
         if let value = normalizedString(from: rawValue) {
-            return MatugenPaletteColor(id: id, dark: nil, light: nil, defaultValue: value)
+            return MatugenPaletteColor(id: id, variants: ["default": value])
         }
 
         guard let dictionary = rawValue as? [String: Any] else { return nil }
 
-        let direct = normalizedString(from: dictionary["color"] ?? dictionary["hex"] ?? dictionary["value"])
-        let dark = normalizedString(from: dictionary["dark"])
-        let light = normalizedString(from: dictionary["light"])
-        let defaultValue = normalizedString(from: dictionary["default"]) ?? direct
+        var variants: [String: String] = [:]
+        if let direct = normalizedString(from: dictionary["color"] ?? dictionary["hex"] ?? dictionary["value"]) {
+            variants["default"] = direct
+        }
+        for (variant, value) in dictionary {
+            guard variant != "color", variant != "hex", variant != "value",
+                  let normalized = normalizedString(from: value)
+            else {
+                continue
+            }
+            variants[variant] = normalized
+        }
 
-        guard dark != nil || light != nil || defaultValue != nil else { return nil }
-        return MatugenPaletteColor(
-            id: id,
-            dark: dark,
-            light: light,
-            defaultValue: defaultValue
-        )
+        guard !variants.isEmpty else { return nil }
+        return MatugenPaletteColor(id: id, variants: variants)
     }
 
     private static func parseTonalPalettes(_ values: [String: Any]) -> [String: [String: String]] {

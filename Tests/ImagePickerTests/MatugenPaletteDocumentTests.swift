@@ -73,6 +73,39 @@ final class MatugenPaletteDocumentTests: XCTestCase {
         XCTAssertEqual(document.semanticColors["default_only"]?.value(for: .dark), "#445566")
     }
 
+    func testDecodesGroupedLegacyThemeVariantsWithoutDroppingAmoled() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "colors": [
+                "dark": [
+                    "surface": "#101010",
+                    "primary": "#112233",
+                ],
+                "light": [
+                    "surface": "#fefefe",
+                    "primary": "#445566",
+                ],
+                "amoled": [
+                    "surface": "#000000",
+                    "primary": "#aabbcc",
+                ],
+                "high_contrast": [
+                    "surface": "#010101",
+                    "primary": "#ffffff",
+                ],
+            ],
+        ])
+
+        let document = try MatugenPaletteDocument(data: data)
+
+        XCTAssertEqual(document.semanticColors["surface"]?.value(for: .dark), "#101010")
+        XCTAssertEqual(document.semanticColors["surface"]?.value(for: .light), "#fefefe")
+        XCTAssertEqual(document.semanticColors["surface"]?.value(for: "amoled"), "#000000")
+        XCTAssertEqual(document.semanticColors["primary"]?.value(for: "amoled"), "#aabbcc")
+        XCTAssertEqual(document.semanticColors["surface"]?.value(for: "high_contrast"), "#010101")
+        XCTAssertTrue(document.availableVariants.contains("amoled"))
+        XCTAssertTrue(document.availableVariants.contains("high_contrast"))
+    }
+
     func testRejectsNonObjectJson() {
         XCTAssertThrowsError(try MatugenPaletteDocument(data: Data("[]".utf8)))
     }
