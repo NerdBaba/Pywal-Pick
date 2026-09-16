@@ -26,6 +26,12 @@ struct PywalPickApp: App {
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 780, height: 560)
+
+        WindowGroup("Matugen Colors", id: "matugen-colors") {
+            MatugenPaletteExplorerView()
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 1100, height: 760)
     }
     
     private func registerFonts() {

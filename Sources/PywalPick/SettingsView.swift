@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 public struct SettingsView: View {
     @ObservedObject public var settingsManager: SettingsManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @State private var showPicker = false
     @State private var activePicker: PickerType = .folder
     @State private var selectedTab: Tab = .paths
@@ -374,6 +375,14 @@ public struct SettingsView: View {
                     Text("Matugen is available as a backend in the main picker and backend cycle. These options apply the next time it is selected.")
                         .font(UIStyle.caption)
                         .foregroundStyle(.secondary)
+
+                    Button {
+                        openWindow(id: "matugen-colors")
+                    } label: {
+                        Label("Explore All Colors", systemImage: "square.grid.3x3.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .help("Inspect every generated Material, Base16, and tonal palette color")
                 }
                 .uiSettingsSection()
 
