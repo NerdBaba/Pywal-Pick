@@ -37,6 +37,8 @@ References:
   normal `~/.cache/wal` files.
 - Preserve Matugen’s full semantic palette for consumers that understand
   Material roles.
+- Let users inspect the complete generated Matugen palette inside the app,
+  including semantic roles, Base16 slots, and tonal palettes.
 - Render the complete installed pywal theme set through pywal itself instead
   of reimplementing its template formats.
 - Keep the main actor responsive and avoid duplicate generation when the same
@@ -121,6 +123,22 @@ The service owns:
 - pywal rendering and output validation;
 - atomic per-file publication into `~/.cache/wal`.
 
+### Complete palette model
+
+The raw `matugen-colors.json` output is a supported application artifact, not
+an opaque implementation detail. The decoder accepts the current nested shape
+(`{"dark":{"color":"#..."}}`), Matugen's legacy nested shape
+(`{"dark":"#..."}`), direct string values, stripped six-digit hex values,
+and older grouped theme output such as `colors.dark`, `colors.light`, and
+`colors.amoled`. It retains the selected mode, optional image path, all
+semantic roles, all Base16 slots, arbitrary named variants, and each tonal
+palette exposed by Matugen.
+
+The pywal converter consumes this same model and normalizes only the values it
+must place in pywal's hex-only scheme. Required values that are missing or not
+hex colors fail before staging is published; unrecognized optional values stay
+available to the explorer as text rather than being silently discarded.
+
 ### Matugen-to-pywal mapping
 
 Matugen’s `--base16-backend wal` supplies the terminal palette. The scheme
@@ -187,6 +205,16 @@ direct pywal path is used. The post-processing sequence is shared in behavior:
 The transition overlay remains independent and continues to run while the
 background generation/application work proceeds.
 
+### In-app palette explorer
+
+Settings exposes a `Matugen Colors` window when the Matugen backend is
+selected. The window reads the last successful `matugen-colors.json` and its
+manifest without starting Matugen. It has a search field, dark/light value
+columns, selected-mode values, swatches with copy-to-clipboard actions, named
+variant columns, and separate sections for Material roles, Base16 slots, and
+tonal palettes. Refresh reloads the cache; missing or malformed cache data
+produces an actionable empty/error state.
+
 ## Error handling
 
 - Missing Matugen: show/log a clear fallback message and run pywal.
@@ -205,6 +233,10 @@ Unit and macOS integration tests cover:
 
 - backwards-compatible config decoding and defaults;
 - Matugen JSON decoding, mode selection, and exact Base16-to-pywal mapping;
+- modern, legacy, grouped-theme, and stripped-hex Matugen JSON shapes;
+- preservation of every semantic role, Base16 slot, tonal palette, and named
+  variant;
+- every configured scheme type in both light and dark modes;
 - pywal scheme JSON shape and required cache-file validation;
 - fingerprint changes and cache reuse;
 - deterministic cache publication using an injected process runner.
