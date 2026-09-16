@@ -128,6 +128,41 @@ final class MatugenThemeTests: XCTestCase {
         )
     }
 
+    func testConvertsLegacyAndStrippedHexMatugenColorsForBothModes() throws {
+        let scheme = try MatugenThemeConverter.makePywalScheme(
+            from: Self.legacyMatugenFixture(),
+            wallpaperPath: "/tmp/dummy.jpg",
+            mode: .light
+        )
+
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: scheme) as? [String: Any]
+        )
+        let special = try XCTUnwrap(object["special"] as? [String: String])
+        let colors = try XCTUnwrap(object["colors"] as? [String: String])
+
+        XCTAssertEqual(special["background"], "#fefefe")
+        XCTAssertEqual(special["foreground"], "#101010")
+        XCTAssertEqual(special["cursor"], "#445566")
+        XCTAssertEqual(colors["color0"], "#fefefe")
+        XCTAssertEqual(colors["color7"], "#dddddd")
+        XCTAssertEqual(colors["color15"], "#101010")
+    }
+
+    func testRejectsMalformedRequiredLegacyColor() {
+        XCTAssertThrowsError(
+            try MatugenThemeConverter.makePywalScheme(
+                from: Self.legacyMatugenFixture(primary: "not-a-color"),
+                wallpaperPath: "/tmp/dummy.jpg",
+                mode: .dark
+            )
+        ) { error in
+            guard case MatugenThemeError.invalidColor("primary", "not-a-color") = error else {
+                return XCTFail("Expected an invalid primary color error, got \(error)")
+            }
+        }
+    }
+
     func testThemeServicePublishesPywalCacheAndReusesIt() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
@@ -306,6 +341,38 @@ final class MatugenThemeTests: XCTestCase {
       }
     }
     """
+
+    private static func legacyMatugenFixture(primary: String = "112233") -> Data {
+        let base16Names = [
+            "base00", "base03", "base05", "base07", "base08",
+            "base0a", "base0b", "base0c", "base0d", "base0e",
+        ]
+        var base16: [String: Any] = [:]
+        for (index, name) in base16Names.enumerated() {
+            base16[name] = [
+                "dark": String(format: "%06x", 0x100000 + index),
+                "light": String(format: "%06x", 0x200000 + index),
+            ]
+        }
+        base16["base00"] = ["dark": "101010", "light": "fefefe"]
+        base16["base03"] = ["dark": "303030", "light": "cccccc"]
+        base16["base05"] = ["dark": "505050", "light": "dddddd"]
+        base16["base07"] = ["dark": "707070", "light": "eeeeee"]
+
+        let colors: [String: Any] = [
+            "surface": ["dark": "101010", "light": "fefefe"],
+            "on_surface": ["dark": "f0f0f0", "light": "101010"],
+            "on_background": ["dark": "eeeeee", "light": "101010"],
+            "surface_container_highest": ["dark": "202020", "light": "dddddd"],
+            "primary": ["dark": primary, "light": "445566"],
+            "on_primary": ["dark": "ffffff", "light": "ffffff"],
+        ]
+
+        return try! JSONSerialization.data(withJSONObject: [
+            "base16": base16,
+            "colors": colors,
+        ])
+    }
 }
 
 private actor RecordingThemeProcessRunner: ThemeProcessRunning {

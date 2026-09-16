@@ -23,30 +23,6 @@ struct MatugenThemeAccent: Sendable, Equatable {
 }
 
 struct MatugenThemeConverter {
-    private struct Tone: Decodable {
-        let color: String
-    }
-
-    private struct PaletteColor: Decodable {
-        let dark: Tone?
-        let `default`: Tone?
-        let light: Tone?
-
-        func color(for mode: MatugenMode) -> String? {
-            switch mode {
-            case .dark:
-                return dark?.color ?? `default`?.color
-            case .light:
-                return light?.color ?? `default`?.color
-            }
-        }
-    }
-
-    private struct MatugenPayload: Decodable {
-        let base16: [String: PaletteColor]?
-        let colors: [String: PaletteColor]?
-    }
-
     private static let pywalBase16Mapping: [(String, String)] = [
         ("color0", "base00"),
         ("color1", "base08"),
@@ -69,17 +45,11 @@ struct MatugenThemeConverter {
         wallpaperPath: String,
         mode: MatugenMode
     ) throws -> Data {
-        let payload: MatugenPayload
-        do {
-            payload = try JSONDecoder().decode(MatugenPayload.self, from: data)
-        } catch {
-            throw MatugenThemeError.invalidJSON(error.localizedDescription)
-        }
-
-        guard let base16 = payload.base16 else {
+        let document = try makeDocument(from: data)
+        guard !document.base16Colors.isEmpty else {
             throw MatugenThemeError.missingColor("base16")
         }
-        guard let materialColors = payload.colors else {
+        guard !document.semanticColors.isEmpty else {
             throw MatugenThemeError.missingColor("colors")
         }
 
@@ -87,22 +57,22 @@ struct MatugenThemeConverter {
         for (slot, base16Name) in pywalBase16Mapping {
             pywalColors[slot] = try color(
                 named: base16Name,
-                from: base16,
+                from: document.base16Colors,
                 mode: mode
             )
         }
 
-        let background = try color(named: "surface", from: materialColors, mode: mode)
-        let foreground = try color(named: "on_surface", from: materialColors, mode: mode)
-        let accent = try materialAccent(from: materialColors, mode: mode)
+        let background = try color(named: "surface", from: document.semanticColors, mode: mode)
+        let foreground = try color(named: "on_surface", from: document.semanticColors, mode: mode)
+        let accent = try materialAccent(from: document.semanticColors, mode: mode)
         pywalColors["color7"] = try color(
             named: "surface_container_highest",
-            from: materialColors,
+            from: document.semanticColors,
             mode: mode
         )
         pywalColors["color15"] = try color(
             named: "on_background",
-            from: materialColors,
+            from: document.semanticColors,
             mode: mode
         )
 
@@ -166,34 +136,38 @@ struct MatugenThemeConverter {
         from data: Data,
         mode: MatugenMode
     ) throws -> MatugenThemeAccent {
-        let payload: MatugenPayload
+        let document = try makeDocument(from: data)
+        guard !document.semanticColors.isEmpty else {
+            throw MatugenThemeError.missingColor("colors")
+        }
+        return try materialAccent(from: document.semanticColors, mode: mode)
+    }
+
+    private static func makeDocument(from data: Data) throws -> MatugenPaletteDocument {
         do {
-            payload = try JSONDecoder().decode(MatugenPayload.self, from: data)
+            return try MatugenPaletteDocument(data: data)
         } catch {
             throw MatugenThemeError.invalidJSON(error.localizedDescription)
         }
-        guard let materialColors = payload.colors else {
-            throw MatugenThemeError.missingColor("colors")
-        }
-        return try materialAccent(from: materialColors, mode: mode)
     }
 
     private static func color(
         named name: String,
-        from colors: [String: PaletteColor],
+        from colors: [String: MatugenPaletteColor],
         mode: MatugenMode
     ) throws -> String {
-        guard let paletteColor = colors[name], let value = paletteColor.color(for: mode) else {
+        guard let paletteColor = colors[name], let value = paletteColor.value(for: mode) else {
             throw MatugenThemeError.missingColor(name)
         }
-        guard isHexColor(value) else {
+        let normalized = value.hasPrefix("#") ? value.lowercased() : "#" + value.lowercased()
+        guard isHexColor(normalized) else {
             throw MatugenThemeError.invalidColor(name, value)
         }
-        return value.lowercased()
+        return normalized
     }
 
     private static func materialAccent(
-        from colors: [String: PaletteColor],
+        from colors: [String: MatugenPaletteColor],
         mode: MatugenMode
     ) throws -> MatugenThemeAccent {
         MatugenThemeAccent(
