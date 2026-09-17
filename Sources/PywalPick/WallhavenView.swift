@@ -890,6 +890,28 @@ struct WallhavenThumbnailCard: View {
     }
 }
 
+enum WallhavenShowcaseImageLayout {
+    static let maxDisplaySize = CGSize(width: 900, height: 550)
+
+    static func fittedSize(for imageSize: CGSize) -> CGSize {
+        guard imageSize.width > 0, imageSize.height > 0 else {
+            return maxDisplaySize
+        }
+
+        let scale = min(
+            1,
+            min(
+                maxDisplaySize.width / imageSize.width,
+                maxDisplaySize.height / imageSize.height
+            )
+        )
+        return CGSize(
+            width: imageSize.width * scale,
+            height: imageSize.height * scale
+        )
+    }
+}
+
 struct WallhavenPreviewView: View {
     let wallpaper: WallhavenWallpaper
     let isDownloaded: Bool
@@ -902,6 +924,7 @@ struct WallhavenPreviewView: View {
     let onDismiss: () -> Void
 
     @State private var previewImage: Image?
+    @State private var previewImageSize: CGSize?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -913,20 +936,24 @@ struct WallhavenPreviewView: View {
             VStack(spacing: 20) {
                 ZStack {
                     if let previewImage {
+                        let imageSize = WallhavenShowcaseImageLayout.fittedSize(
+                            for: previewImageSize ?? WallhavenShowcaseImageLayout.maxDisplaySize
+                        )
                         previewImage
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 900, maxHeight: 550)
+                            .frame(width: imageSize.width, height: imageSize.height)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .shadow(radius: 20)
+                            .overlay {
+                                if isDownloadAnimating {
+                                    DownloadSuccessOverlay(cornerRadius: 12, iconSize: 124, isSubtle: true)
+                                }
+                            }
                     } else {
                         ProgressView()
                             .controlSize(.large)
                             .frame(width: 200, height: 200)
-                    }
-
-                    if isDownloadAnimating, previewImage != nil {
-                        DownloadSuccessOverlay(cornerRadius: 12, iconSize: 124, isSubtle: true)
                     }
                 }
 
@@ -1041,6 +1068,7 @@ struct WallhavenPreviewView: View {
         for (index, url) in WallhavenImageSources.previewURLs(for: wallpaper).enumerated() {
             let maxPixelSize = index < 2 ? target : 1024
             if let image = await loader.load(urlString: url, maxPixelSize: maxPixelSize) {
+                previewImageSize = image.size
                 previewImage = Image(nsImage: image)
                 return
             }

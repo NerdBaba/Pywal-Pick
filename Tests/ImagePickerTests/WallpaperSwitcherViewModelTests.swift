@@ -279,6 +279,15 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
         XCTAssertEqual(wallpaper.fileExtension, "tiff")
     }
 
+    func testWallhavenShowcaseImageFrameFitsWithinItsDisplayBounds() {
+        let frame = WallhavenShowcaseImageLayout.fittedSize(
+            for: CGSize(width: 1920, height: 1080)
+        )
+
+        XCTAssertEqual(frame.width, 900, accuracy: 0.001)
+        XCTAssertEqual(frame.height, 506.25, accuracy: 0.001)
+    }
+
     func testSearchErrorClearsLoadingAndSurfacesMessage() async {
         let api = StubWallhavenAPI(result: .failure(.rateLimited))
         let viewModel = WallhavenViewModel(api: api)
