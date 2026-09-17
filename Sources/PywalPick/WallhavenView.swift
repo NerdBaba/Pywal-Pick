@@ -752,10 +752,7 @@ struct WallhavenThumbnailCard: View {
     let onSetWallpaper: () -> Void
 
     @State private var thumbnailImage: Image?
-    @State private var fullImage: Image?
     @State private var isHovered = false
-    @State private var fullImageTask: Task<Void, Never>?
-    @State private var cancelImageTask: Task<Void, Never>?
 
     var showActions: Bool { isHovered || isHighlighted }
     private var isDownloading: Bool { downloadProgress != nil }
@@ -766,13 +763,7 @@ struct WallhavenThumbnailCard: View {
                 .fill(.quaternary.opacity(0.15))
                 .aspectRatio(wallpaper.aspectRatio, contentMode: .fit)
 
-            if let fullImage {
-                fullImage
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-            } else if let thumbnailImage {
+            if let thumbnailImage {
                 thumbnailImage
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -865,22 +856,6 @@ struct WallhavenThumbnailCard: View {
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
             }
-            if hovering {
-                scheduleFullImageLoad()
-            } else if !isHighlighted {
-                cancelFullImageLoad()
-            }
-        }
-        .onChange(of: isHighlighted) { _, highlighted in
-            if highlighted {
-                scheduleFullImageLoad()
-            } else if !isHovered {
-                cancelFullImageLoad()
-            }
-        }
-        .onDisappear {
-            cancelFullImageLoad()
-            fullImage = nil
         }
         .contextMenu {
             Button("Preview", systemImage: "eye") { onTap() }
@@ -906,41 +881,13 @@ struct WallhavenThumbnailCard: View {
     }
 
     private func loadThumbnail() async {
-        if let image = await WallhavenImageLoader.shared.load(urlString: wallpaper.thumbs.large, maxPixelSize: 512) {
-            thumbnailImage = Image(nsImage: image)
-        }
-    }
-
-    private func scheduleFullImageLoad() {
-        guard fullImage == nil, fullImageTask == nil else { return }
-        let originalURL = wallpaper.thumbs.original
-        let largeURL = wallpaper.thumbs.large
-        fullImageTask = Task {
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            if let image = await WallhavenImageLoader.shared.load(urlString: originalURL, maxPixelSize: 1024) {
-                fullImage = Image(nsImage: image)
-            } else if let image = await WallhavenImageLoader.shared.load(urlString: largeURL, maxPixelSize: 1024) {
-                fullImage = Image(nsImage: image)
+        for url in WallhavenImageSources.thumbnailURLs(for: wallpaper) {
+            if let image = await WallhavenImageLoader.shared.load(urlString: url, maxPixelSize: 512) {
+                thumbnailImage = Image(nsImage: image)
+                return
             }
-            fullImageTask = nil
         }
     }
-
-    private func cancelFullImageLoad() {
-        fullImageTask?.cancel()
-        fullImageTask = nil
-        cancelImageTask?.cancel()
-        let originalURL = wallpaper.thumbs.original
-        let largeURL = wallpaper.thumbs.large
-        cancelImageTask = Task {
-            await WallhavenImageLoader.shared.cancel(urlString: originalURL, maxPixelSize: 1024)
-            guard !Task.isCancelled else { return }
-            await WallhavenImageLoader.shared.cancel(urlString: largeURL, maxPixelSize: 1024)
-            cancelImageTask = nil
-        }
-    }
-
 }
 
 struct WallhavenPreviewView: View {
@@ -1091,16 +1038,12 @@ struct WallhavenPreviewView: View {
         let loader = WallhavenImageLoader.shared
         let width = Int(NSScreen.main?.frame.width ?? 1920)
         let target = min(max(width, 1024), 2560)
-        if let image = await loader.load(urlString: wallpaper.path, maxPixelSize: target) {
-            previewImage = Image(nsImage: image)
-            return
-        }
-        if let image = await loader.load(urlString: wallpaper.thumbs.original, maxPixelSize: target) {
-            previewImage = Image(nsImage: image)
-            return
-        }
-        if let image = await loader.load(urlString: wallpaper.thumbs.large, maxPixelSize: 1024) {
-            previewImage = Image(nsImage: image)
+        for (index, url) in WallhavenImageSources.previewURLs(for: wallpaper).enumerated() {
+            let maxPixelSize = index < 2 ? target : 1024
+            if let image = await loader.load(urlString: url, maxPixelSize: maxPixelSize) {
+                previewImage = Image(nsImage: image)
+                return
+            }
         }
     }
 

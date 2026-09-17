@@ -49,15 +49,78 @@ struct WallhavenWallpaper: Codable, Sendable, Identifiable {
     }
 
     var fileExtension: String {
-        if fileType.contains("png") { return "png" }
-        if fileType.contains("jpeg") || fileType.contains("jpg") { return "jpg" }
-        if fileType.contains("webp") { return "webp" }
+        let normalizedType = fileType
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        if normalizedType.contains("png") { return "png" }
+        if normalizedType.contains("jpeg") || normalizedType.contains("jpg") { return "jpg" }
+        if normalizedType.contains("webp") { return "webp" }
+        if normalizedType.contains("gif") { return "gif" }
+        if normalizedType.contains("bmp") { return "bmp" }
+        if normalizedType.contains("tiff") || normalizedType.contains("tif") { return "tiff" }
+        if normalizedType.contains("avif") { return "avif" }
+
+        if let pathExtension = URL(string: path)?.pathExtension,
+           let extensionFromPath = Self.canonicalFileExtension(pathExtension) {
+            return extensionFromPath
+        }
         return "jpg"
+    }
+
+    private static func canonicalFileExtension(_ pathExtension: String) -> String? {
+        switch pathExtension.lowercased() {
+        case "jpg", "jpeg": return "jpg"
+        case "png": return "png"
+        case "gif": return "gif"
+        case "bmp": return "bmp"
+        case "tif", "tiff": return "tiff"
+        case "webp": return "webp"
+        case "avif": return "avif"
+        default: return nil
+        }
     }
 
     var aspectRatio: Double {
         guard dimensionY > 0 else { return 16.0 / 9.0 }
         return Double(dimensionX) / Double(dimensionY)
+    }
+}
+
+enum WallhavenImageSources {
+    /// Thumbnail cards intentionally never include original image URLs.
+    /// Highlighting and hovering a card must not replace its stable thumbnail.
+    static func thumbnailURLs(for wallpaper: WallhavenWallpaper) -> [String] {
+        uniqueValidURLs([
+            wallpaper.thumbs.large,
+            wallpaper.thumbs.small
+        ])
+    }
+
+    /// Showcase previews may use the original image, then progressively smaller fallbacks.
+    static func previewURLs(for wallpaper: WallhavenWallpaper) -> [String] {
+        uniqueValidURLs([
+            wallpaper.path,
+            wallpaper.thumbs.original,
+            wallpaper.thumbs.large,
+            wallpaper.thumbs.small
+        ])
+    }
+
+    private static func uniqueValidURLs(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.compactMap { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let url = URL(string: trimmed),
+                  let scheme = url.scheme?.lowercased(),
+                  (scheme == "http" || scheme == "https"),
+                  url.host != nil,
+                  seen.insert(trimmed).inserted
+            else {
+                return nil
+            }
+            return trimmed
+        }
     }
 }
 

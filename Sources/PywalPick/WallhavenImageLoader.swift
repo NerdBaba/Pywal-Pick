@@ -53,7 +53,12 @@ actor WallhavenImageLoader {
         let task = Task<NSImage?, Never> { [session] in
             guard let url = URL(string: urlString) else { return nil }
             do {
-                let (data, _) = try await session.data(from: url)
+                let (data, response) = try await session.data(from: url)
+                guard let response = response as? HTTPURLResponse,
+                      (200..<300).contains(response.statusCode)
+                else {
+                    return nil
+                }
                 if Task.isCancelled { return nil }
                 let image = Self.downsampledImage(from: data, maxPixelSize: maxPixelSize)
                 if Task.isCancelled { return nil }

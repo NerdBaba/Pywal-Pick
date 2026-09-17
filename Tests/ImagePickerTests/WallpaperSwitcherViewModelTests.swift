@@ -214,6 +214,71 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
         XCTAssertEqual(response.meta.query, "doom")
     }
 
+    func testWallhavenThumbnailSourcesNeverUseOriginalImage() {
+        let wallpaper = makeWallhavenResponse().data[0]
+
+        XCTAssertEqual(
+            WallhavenImageSources.thumbnailURLs(for: wallpaper),
+            [wallpaper.thumbs.large, wallpaper.thumbs.small]
+        )
+        XCTAssertFalse(
+            WallhavenImageSources.thumbnailURLs(for: wallpaper).contains(wallpaper.path)
+        )
+        XCTAssertFalse(
+            WallhavenImageSources.thumbnailURLs(for: wallpaper).contains(wallpaper.thumbs.original)
+        )
+    }
+
+    func testWallhavenPreviewSourcesPreferOriginalAndFallbackToAvailableThumbnails() {
+        let wallpaper = makeWallhavenWallpaper(
+            path: "https://w.wallhaven.cc/full/abc.jpg",
+            thumbs: WallhavenThumbs(
+                large: "https://th.wallhaven.cc/lg/abc.jpg",
+                original: "https://w.wallhaven.cc/full/abc.jpg",
+                small: "https://th.wallhaven.cc/sm/abc.jpg"
+            )
+        )
+
+        XCTAssertEqual(
+            WallhavenImageSources.previewURLs(for: wallpaper),
+            [
+                wallpaper.path,
+                wallpaper.thumbs.large,
+                wallpaper.thumbs.small
+            ]
+        )
+    }
+
+    func testWallhavenFileExtensionHandlesSupportedImageTypes() {
+        let expectedExtensions = [
+            "image/jpeg": "jpg",
+            "image/jpg": "jpg",
+            "image/png": "png",
+            "image/gif": "gif",
+            "image/bmp": "bmp",
+            "image/tiff": "tiff",
+            "image/webp": "webp",
+            "image/avif": "avif"
+        ]
+
+        for (fileType, expectedExtension) in expectedExtensions {
+            XCTAssertEqual(
+                makeWallhavenWallpaper(fileType: fileType).fileExtension,
+                expectedExtension,
+                "Unexpected extension for \(fileType)"
+            )
+        }
+    }
+
+    func testWallhavenFileExtensionFallsBackToPathExtension() {
+        let wallpaper = makeWallhavenWallpaper(
+            fileType: "",
+            path: "https://w.wallhaven.cc/full/abc.TIF?download=1"
+        )
+
+        XCTAssertEqual(wallpaper.fileExtension, "tiff")
+    }
+
     func testSearchErrorClearsLoadingAndSurfacesMessage() async {
         let api = StubWallhavenAPI(result: .failure(.rateLimited))
         let viewModel = WallhavenViewModel(api: api)
@@ -325,29 +390,9 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
     ) -> WallhavenSearchResponse {
         WallhavenSearchResponse(
             data: [
-                WallhavenWallpaper(
+                makeWallhavenWallpaper(
                     id: id,
-                    url: "https://wallhaven.cc/w/\(id)",
-                    shortUrl: "https://w.wallhaven.cc/\(id)",
-                    views: 1,
-                    favorites: 1,
-                    source: nil,
-                    purity: "sfw",
-                    category: "general",
-                    dimensionX: 1920,
-                    dimensionY: 1080,
-                    resolution: "1920x1080",
-                    ratio: "16x9",
-                    fileSize: 100,
-                    fileType: "image/jpeg",
-                    createdAt: "2026-01-01 00:00:00",
-                    colors: ["#000000"],
-                    path: "https://w.wallhaven.cc/full/\(id).jpg",
-                    thumbs: WallhavenThumbs(
-                        large: "https://th.wallhaven.cc/lg/\(id).jpg",
-                        original: "https://w.wallhaven.cc/full/\(id).jpg",
-                        small: "https://th.wallhaven.cc/sm/\(id).jpg"
-                    )
+                    path: "https://w.wallhaven.cc/full/\(id).jpg"
                 )
             ],
             meta: WallhavenMeta(
@@ -357,6 +402,39 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
                 total: total,
                 query: nil,
                 seed: nil
+            )
+        )
+    }
+
+    private func makeWallhavenWallpaper(
+        id: String = "abc",
+        fileType: String = "image/jpeg",
+        path: String? = nil,
+        thumbs: WallhavenThumbs? = nil
+    ) -> WallhavenWallpaper {
+        let originalPath = path ?? "https://w.wallhaven.cc/full/\(id).jpg"
+        return WallhavenWallpaper(
+            id: id,
+            url: "https://wallhaven.cc/w/\(id)",
+            shortUrl: "https://w.wallhaven.cc/\(id)",
+            views: 1,
+            favorites: 1,
+            source: nil,
+            purity: "sfw",
+            category: "general",
+            dimensionX: 1920,
+            dimensionY: 1080,
+            resolution: "1920x1080",
+            ratio: "16x9",
+            fileSize: 100,
+            fileType: fileType,
+            createdAt: "2026-01-01 00:00:00",
+            colors: ["#000000"],
+            path: originalPath,
+            thumbs: thumbs ?? WallhavenThumbs(
+                large: "https://th.wallhaven.cc/lg/\(id).jpg",
+                original: originalPath,
+                small: "https://th.wallhaven.cc/sm/\(id).jpg"
             )
         )
     }
