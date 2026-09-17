@@ -189,7 +189,10 @@ final class MatugenThemeTests: XCTestCase {
         try Data("wallpaper fixture".utf8).write(to: sourceURL)
         defer { try? fileManager.removeItem(at: root) }
 
-        let runner = RecordingThemeProcessRunner(matugenOutput: Self.matugenFixture)
+        let runner = RecordingThemeProcessRunner(
+            matugenOutput: Self.matugenFixture,
+            matugenDiagnostics: "Format error decoding Jpeg: Error parsing image."
+        )
         let service = MatugenThemeService(
             processRunner: runner,
             cacheRoot: cacheRoot,
@@ -540,10 +543,12 @@ final class MatugenThemeTests: XCTestCase {
 
 private actor RecordingThemeProcessRunner: ThemeProcessRunning {
     let matugenOutput: String
+    let matugenDiagnostics: String
     private(set) var callCount = 0
 
-    init(matugenOutput: String) {
+    init(matugenOutput: String, matugenDiagnostics: String = "") {
         self.matugenOutput = matugenOutput
+        self.matugenDiagnostics = matugenDiagnostics
     }
 
     func run(
@@ -554,7 +559,15 @@ private actor RecordingThemeProcessRunner: ThemeProcessRunning {
         callCount += 1
 
         if arguments.first == "image" {
-            return ThemeProcessOutput(exitCode: 0, output: matugenOutput)
+            let combinedOutput = [matugenOutput, matugenDiagnostics]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            return ThemeProcessOutput(
+                exitCode: 0,
+                output: combinedOutput,
+                standardOutput: matugenOutput,
+                standardError: matugenDiagnostics
+            )
         }
 
         guard let outDirectoryIndex = arguments.firstIndex(of: "--out-dir"),

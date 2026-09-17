@@ -3,10 +3,31 @@ import Foundation
 public struct ThemeProcessOutput: Sendable {
     public let exitCode: Int32
     public let output: String
+    public let standardOutput: String
+    public let standardError: String
 
-    public init(exitCode: Int32, output: String) {
+    public init(
+        exitCode: Int32,
+        output: String,
+        standardOutput: String? = nil,
+        standardError: String = ""
+    ) {
         self.exitCode = exitCode
         self.output = output
+        self.standardOutput = standardOutput ?? output
+        self.standardError = standardError
+    }
+}
+
+private final class ThemePipeReader: @unchecked Sendable {
+    private let pipe: Pipe
+
+    init(pipe: Pipe) {
+        self.pipe = pipe
+    }
+
+    func readToEnd() -> Data {
+        pipe.fileHandleForReading.readDataToEndOfFile()
     }
 }
 
@@ -36,8 +57,9 @@ public struct SystemThemeProcessRunner: ThemeProcessRunning {
             process.environment = processEnvironment
 
             let outputPipe = Pipe()
+            let errorPipe = Pipe()
             process.standardOutput = outputPipe
-            process.standardError = outputPipe
+            process.standardError = errorPipe
 
             do {
                 try process.run()
@@ -48,12 +70,32 @@ public struct SystemThemeProcessRunner: ThemeProcessRunning {
                 )
             }
 
-            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let outputTask = Task.detached(priority: .utility) {
+                ThemePipeReader(pipe: outputPipe).readToEnd()
+            }
+            let errorTask = Task.detached(priority: .utility) {
+                ThemePipeReader(pipe: errorPipe).readToEnd()
+            }
+
             process.waitUntilExit()
+
+            let standardOutput = String(
+                data: await outputTask.value,
+                encoding: .utf8
+            ) ?? ""
+            let standardError = String(
+                data: await errorTask.value,
+                encoding: .utf8
+            ) ?? ""
+            let combinedOutput = [standardOutput, standardError]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
 
             return ThemeProcessOutput(
                 exitCode: process.terminationStatus,
-                output: String(data: outputData, encoding: .utf8) ?? ""
+                output: combinedOutput,
+                standardOutput: standardOutput,
+                standardError: standardError
             )
         }.value
     }
@@ -239,7 +281,7 @@ public actor MatugenThemeService {
             throw MatugenThemeServiceError.processFailed(matugenOutput.output)
         }
 
-        let matugenJSON = Data(matugenOutput.output.utf8)
+        let matugenJSON = Data(matugenOutput.standardOutput.utf8)
         let schemeJSON = try MatugenThemeConverter.makePywalScheme(
             from: matugenJSON,
             wallpaperPath: inputURL.path,
