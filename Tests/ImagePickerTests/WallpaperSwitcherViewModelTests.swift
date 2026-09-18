@@ -129,6 +129,13 @@ final class WallpaperSwitcherViewModelTests: XCTestCase {
         )
     }
 
+    func testDownloadIndicatorClampsProgressAndReportsWholePercent() {
+        XCTAssertEqual(WallhavenDownloadIndicatorModel.normalizedProgress(-0.2), 0)
+        XCTAssertEqual(WallhavenDownloadIndicatorModel.normalizedProgress(1.2), 1)
+        XCTAssertEqual(WallhavenDownloadIndicatorModel.percentage(for: 0.456), 45)
+        XCTAssertEqual(WallhavenDownloadIndicatorModel.percentage(for: 0.999), 99)
+    }
+
     func testDownloadedIdsStaticIgnoresDirectories() throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

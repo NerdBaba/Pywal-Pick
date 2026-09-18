@@ -818,11 +818,6 @@ struct WallhavenThumbnailCard: View {
                 }
                 .padding(6)
 
-                if let progress = downloadProgress, progress > 0 && progress < 1 {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                        .background(.ultraThinMaterial)
-                }
             }
 
             if isDownloaded && !showActions {
@@ -845,6 +840,19 @@ struct WallhavenThumbnailCard: View {
                     iconSize: 76,
                     isSubtle: isHighlighted
                 )
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if let progress = downloadProgress {
+                WallhavenDownloadIndicator(
+                    progress: progress,
+                    size: 30,
+                    lineWidth: 3,
+                    tint: .white
+                )
+                .padding(6)
+                .background(.black.opacity(0.38), in: Circle())
+                .padding(6)
             }
         }
         .overlay(
@@ -977,15 +985,7 @@ struct WallhavenPreviewView: View {
                     }
                     .font(.caption)
 
-                    if let progress = downloadProgress, progress > 0 && progress < 1 {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(value: progress)
-                                .progressViewStyle(.linear)
-                            Text("Downloading… \(Int(progress * 100))%")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else if isDownloaded {
+                    if isDownloaded {
                         Label("Downloaded", systemImage: "checkmark.circle.fill")
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.green)
@@ -1015,10 +1015,17 @@ struct WallhavenPreviewView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 HStack(spacing: 12) {
-                    if downloadProgress != nil {
-                        Label("Downloading…", systemImage: "arrow.down.circle")
-                            .foregroundStyle(.secondary)
-                            .controlSize(.large)
+                    if let progress = downloadProgress {
+                        HStack(spacing: 8) {
+                            WallhavenDownloadIndicator(
+                                progress: progress,
+                                size: 28,
+                                lineWidth: 3
+                            )
+                            Text("Downloading… \(WallhavenDownloadIndicatorModel.percentage(for: progress))%")
+                        }
+                        .foregroundStyle(.secondary)
+                        .controlSize(.large)
                     } else if isDownloaded {
                         Label("Downloaded", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
