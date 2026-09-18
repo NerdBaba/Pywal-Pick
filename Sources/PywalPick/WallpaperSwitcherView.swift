@@ -1177,7 +1177,15 @@ public struct WallpaperSwitcherView: View {
         }
 
         print("✓ \(generatorLabel) updated colors file with \(colorLines.count) colors")
-        await setAccentColorFromWal()
+        if generatorLabel == "Matugen theme",
+           let primary = try? MatugenSystemAccent.primary(
+               in: URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".cache/wal"),
+               mode: settingsManager.config.matugenMode
+           ) {
+            await setAccentColor(primary)
+        } else {
+            await setAccentColorFromWal()
+        }
 
         if settingsManager.config.runPywalfox {
             print("Running pywalfox update...")
@@ -1311,21 +1319,7 @@ public struct WallpaperSwitcherView: View {
                 let accentColorHex = colorLines[7].trimmingCharacters(in: .whitespacesAndNewlines)
 
                 if colorFromHexString(accentColorHex) != nil {
-                    let colorName = mapHexToSystemColorName(accentColorHex)
-                    print("Setting accent color from wal: \(accentColorHex) -> \(colorName)")
-
-                    // Set the accent color using defaults
-                    let accentCommand = "defaults write -g AppleAccentColor -string '\(colorName)'"
-                    let _ = await runShellCommand(accentCommand)
-
-                    // Also try setting highlight color
-                    let highlightCommand =
-                        "defaults write -g AppleHighlightColor -string '\(accentColorHex)'"
-                    let _ = await runShellCommand(highlightCommand)
-
-                    // Restart system services to apply changes
-                    let _ = await runShellCommand("killall Dock")
-                    let _ = await runShellCommand("killall ControlCenter")
+                    await setAccentColor(accentColorHex)
                 }
             } else {
                 print("Not enough colors found in wal colors file")
@@ -1333,6 +1327,25 @@ public struct WallpaperSwitcherView: View {
         } catch {
             print("Error reading wal colors file: \(error)")
         }
+    }
+
+    private func setAccentColor(_ accentColorHex: String) async {
+        guard colorFromHexString(accentColorHex) != nil else { return }
+        let colorName = mapHexToSystemColorName(accentColorHex)
+        print("Setting accent color: \(accentColorHex) -> \(colorName)")
+
+        // Set the accent color using defaults
+        let accentCommand = "defaults write -g AppleAccentColor -string '\(colorName)'"
+        let _ = await runShellCommand(accentCommand)
+
+        // Also try setting highlight color
+        let highlightCommand =
+            "defaults write -g AppleHighlightColor -string '\(accentColorHex)'"
+        let _ = await runShellCommand(highlightCommand)
+
+        // Restart system services to apply changes
+        let _ = await runShellCommand("killall Dock")
+        let _ = await runShellCommand("killall ControlCenter")
     }
 
     private func colorFromHexString(_ hexString: String) -> NSColor? {

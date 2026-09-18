@@ -143,13 +143,20 @@ public actor MatugenThemeService {
     public static let shared = MatugenThemeService()
 
     private struct Manifest: Codable, Equatable, Sendable {
+        let mappingVersion: Int
         let sourcePath: String
         let sourceSize: Int64
         let sourceModificationDate: TimeInterval
         let sourceResourceIdentifier: String
         let inputPath: String
         let matugenBinaryPath: String
+        let matugenBinarySize: Int64
+        let matugenBinaryModificationDate: TimeInterval
         let walBinaryPath: String
+        let walBinarySize: Int64
+        let walBinaryModificationDate: TimeInterval
+        let inputSize: Int64
+        let inputModificationDate: TimeInterval
         let mode: MatugenMode
         let schemeType: MatugenSchemeType
         let contrast: Double
@@ -158,6 +165,7 @@ public actor MatugenThemeService {
     private static let requiredFiles = ["colors", "colors.json", "colors.sh"]
     private static let manifestName = "pywalpick-matugen-manifest.json"
     private static let rawMatugenColorsName = "matugen-colors.json"
+    private static let mappingVersion = 2
 
     private let processRunner: any ThemeProcessRunning
     private let fileManager: FileManager
@@ -285,7 +293,8 @@ public actor MatugenThemeService {
         let schemeJSON = try MatugenThemeConverter.makePywalScheme(
             from: matugenJSON,
             wallpaperPath: inputURL.path,
-            mode: config.matugenMode
+            mode: config.matugenMode,
+            schemeType: config.matugenSchemeType
         )
 
         let schemeURL = stagingDirectory.appendingPathComponent("matugen-pywal-scheme.json")
@@ -301,6 +310,7 @@ public actor MatugenThemeService {
                 "-n",
                 "-q",
                 "-e",
+                "-s",
             ],
             environment: [
                 "NO_FUN": "1",
@@ -323,6 +333,11 @@ public actor MatugenThemeService {
         )
 
         try validateGeneratedCache(at: stagingDirectory)
+        try PywalThemeValidator.validate(
+            directory: stagingDirectory,
+            expectedScheme: schemeJSON,
+            enforceStandardContrast: config.matugenContrast == 0
+        )
         try matugenJSON.write(
             to: stagingDirectory.appendingPathComponent(Self.rawMatugenColorsName),
             options: .atomic
@@ -365,14 +380,33 @@ public actor MatugenThemeService {
             .contentModificationDateKey,
             .fileResourceIdentifierKey,
         ])
+        let inputValues = try inputURL.resourceValues(forKeys: [
+            .fileSizeKey,
+            .contentModificationDateKey,
+        ])
+        let matugenValues = try URL(fileURLWithPath: matugenPath).resourceValues(forKeys: [
+            .fileSizeKey,
+            .contentModificationDateKey,
+        ])
+        let walValues = try URL(fileURLWithPath: walPath).resourceValues(forKeys: [
+            .fileSizeKey,
+            .contentModificationDateKey,
+        ])
         return Manifest(
+            mappingVersion: Self.mappingVersion,
             sourcePath: sourceURL.standardizedFileURL.path,
             sourceSize: Int64(values.fileSize ?? 0),
             sourceModificationDate: values.contentModificationDate?.timeIntervalSince1970 ?? 0,
             sourceResourceIdentifier: String(describing: values.fileResourceIdentifier as Any),
             inputPath: inputURL.standardizedFileURL.path,
             matugenBinaryPath: matugenPath,
+            matugenBinarySize: Int64(matugenValues.fileSize ?? 0),
+            matugenBinaryModificationDate: matugenValues.contentModificationDate?.timeIntervalSince1970 ?? 0,
             walBinaryPath: walPath,
+            walBinarySize: Int64(walValues.fileSize ?? 0),
+            walBinaryModificationDate: walValues.contentModificationDate?.timeIntervalSince1970 ?? 0,
+            inputSize: Int64(inputValues.fileSize ?? 0),
+            inputModificationDate: inputValues.contentModificationDate?.timeIntervalSince1970 ?? 0,
             mode: config.matugenMode,
             schemeType: config.matugenSchemeType,
             contrast: config.matugenContrast
@@ -417,10 +451,29 @@ public actor MatugenThemeService {
             return false
         }
 
-        return Self.requiredFiles.allSatisfy {
+        guard Self.requiredFiles.allSatisfy({
             let url = pywalCacheDirectory.appendingPathComponent($0)
             return fileManager.fileExists(atPath: url.path)
                 && ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0
+        }) else { return false }
+
+        guard let rawData = try? Data(contentsOf: pywalCacheDirectory.appendingPathComponent(Self.rawMatugenColorsName)),
+              let scheme = try? MatugenThemeConverter.makePywalScheme(
+                  from: rawData,
+                  wallpaperPath: manifest.inputPath,
+                  mode: manifest.mode,
+                  schemeType: manifest.schemeType
+              )
+        else { return false }
+        do {
+            try PywalThemeValidator.validate(
+                directory: pywalCacheDirectory,
+                expectedScheme: scheme,
+                enforceStandardContrast: manifest.contrast == 0
+            )
+            return true
+        } catch {
+            return false
         }
     }
 

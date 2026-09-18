@@ -212,7 +212,8 @@ func performWalApplication(
             return finishWalApplication(
                 noPywalfox: noPywalfox,
                 runPywalfox: runPywalfox,
-                customScript: customScript
+                customScript: customScript,
+                matugenMode: config.matugenMode
             )
         } catch {
             print("⚠ Matugen failed: \(error.localizedDescription). Falling back to Schemer2.")
@@ -229,7 +230,8 @@ func performWalApplication(
         return finishWalApplication(
             noPywalfox: noPywalfox,
             runPywalfox: runPywalfox,
-            customScript: customScript
+            customScript: customScript,
+            matugenMode: nil
         )
     } else {
         print("✗ Wal command failed")
@@ -270,7 +272,8 @@ private func blockingMatugenGenerate(
 func finishWalApplication(
     noPywalfox: Bool,
     runPywalfox: Bool,
-    customScript: String
+    customScript: String,
+    matugenMode: MatugenMode? = nil
 ) -> Bool {
     let walCachePath = NSHomeDirectory() + "/.cache/wal/colors"
     guard FileManager.default.fileExists(atPath: walCachePath),
@@ -288,7 +291,15 @@ func finishWalApplication(
     }
     print("✓ Wal updated colors: \(colorLines.count) colors extracted")
 
-    setAccentColorFromWal()
+    if let matugenMode,
+       let primary = try? MatugenSystemAccent.primary(
+           in: URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".cache/wal"),
+           mode: matugenMode
+       ) {
+        setAccentColorHex(primary)
+    } else {
+        setAccentColorFromWal()
+    }
 
     if !noPywalfox && runPywalfox {
         print("Running pywalfox update...")
@@ -300,6 +311,15 @@ func finishWalApplication(
         _ = runShellCommand(customScript)
     }
     return true
+}
+
+private func setAccentColorHex(_ accentColorHex: String) {
+    let colorName = mapHexToSystemColorName(accentColorHex)
+    print("Setting accent color: \(accentColorHex) -> \(colorName)")
+    _ = runShellCommand("defaults write -g AppleAccentColor -string '\(colorName)'")
+    _ = runShellCommand("defaults write -g AppleHighlightColor -string '\(accentColorHex)'")
+    _ = runShellCommand("killall Dock")
+    _ = runShellCommand("killall ControlCenter")
 }
 
 @MainActor

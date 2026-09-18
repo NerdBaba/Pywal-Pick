@@ -78,7 +78,7 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertEqual(colors["color0"], "#100000")
         XCTAssertEqual(colors["color1"], "#800000")
         XCTAssertEqual(colors["color2"], "#b00000")
-        XCTAssertEqual(colors["color7"], "#202020")
+        XCTAssertEqual(colors["color7"], "#f0f0f0")
         XCTAssertEqual(colors["color8"], "#300000")
         XCTAssertEqual(colors["color15"], "#eeeeee")
     }
@@ -90,6 +90,7 @@ final class MatugenThemeTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let tilixURL = directory.appendingPathComponent("colors-tilix.json")
+        let ghosttyURL = directory.appendingPathComponent("colors-ghostty")
         let original: [String: Any] = [
             "cursor-background-color": "#101010",
             "cursor-foreground-color": "#f0f0f0",
@@ -101,6 +102,11 @@ final class MatugenThemeTests: XCTestCase {
         ]
         try JSONSerialization.data(withJSONObject: original, options: [])
             .write(to: tilixURL)
+        try "background = #101010\nforeground = #f0f0f0\nselection-background = #101010\nselection-foreground = #f0f0f0\n".write(
+            to: ghosttyURL,
+            atomically: true,
+            encoding: .utf8
+        )
 
         try MatugenThemeConverter.applyGeneratedThemeOverrides(
             at: directory,
@@ -116,6 +122,12 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertEqual(updated["cursor-foreground-color"] as? String, "#0088ff")
         XCTAssertEqual(updated["use-highlight-color"] as? Bool, true)
         XCTAssertEqual(updated["use-cursor-color"] as? Bool, true)
+
+        let ghostty = try String(contentsOf: ghosttyURL, encoding: .utf8)
+        XCTAssertTrue(ghostty.contains("selection-background = #0088ff"))
+        XCTAssertTrue(ghostty.contains("selection-foreground = #001122"))
+        XCTAssertTrue(ghostty.contains("cursor-color = #0088ff"))
+        XCTAssertTrue(ghostty.contains("cursor-text = #001122"))
     }
 
     func testRejectsMatugenJsonWithoutRequiredPalette() {
@@ -145,7 +157,7 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertEqual(special["foreground"], "#101010")
         XCTAssertEqual(special["cursor"], "#445566")
         XCTAssertEqual(colors["color0"], "#fefefe")
-        XCTAssertEqual(colors["color7"], "#dddddd")
+        XCTAssertEqual(colors["color7"], "#101010")
         XCTAssertEqual(colors["color15"], "#101010")
     }
 
@@ -491,7 +503,13 @@ final class MatugenThemeTests: XCTestCase {
         for (familyIndex, family) in ["error", "neutral", "neutral_variant", "primary", "secondary", "tertiary"].enumerated() {
             var tones: [String: Any] = [:]
             for (toneIndex, tone) in toneNames.enumerated() {
-                tones[tone] = ["color": String(format: "#%06x", 0x500000 + familyIndex * 0x1000 + toneIndex)]
+                let toneValue = Int(tone) ?? toneIndex
+                let channel = min(255, max(0, toneValue * 255 / 100))
+                let familyOffset = familyIndex % 3
+                let red = min(255, channel + familyOffset * 3)
+                let green = min(255, channel + ((familyIndex + 1) % 3) * 3)
+                let blue = min(255, channel + ((familyIndex + 2) % 3) * 3)
+                tones[tone] = ["color": String(format: "#%02x%02x%02x", red, green, blue)]
             }
             palettes[family] = tones
         }
@@ -577,16 +595,36 @@ private actor RecordingThemeProcessRunner: ThemeProcessRunning {
         }
 
         let directory = URL(fileURLWithPath: arguments[outDirectoryIndex + 1])
-        let colors = (0..<16).map { index in "#\(String(format: "%06x", index * 0x10101))" }.joined(separator: "\n") + "\n"
+        guard let themeIndex = arguments.firstIndex(of: "--theme"),
+              arguments.indices.contains(themeIndex + 1),
+              let themeData = try? Data(contentsOf: URL(fileURLWithPath: arguments[themeIndex + 1])),
+              let themeObject = try? JSONSerialization.jsonObject(with: themeData),
+              let theme = themeObject as? [String: Any],
+              let themeColors = theme["colors"] as? [String: String],
+              let themeSpecial = theme["special"] as? [String: String]
+        else {
+            return ThemeProcessOutput(exitCode: 1, output: "missing theme fixture")
+        }
+        let orderedColors = (0..<16).compactMap { themeColors["color\($0)"] }
+        guard orderedColors.count == 16 else {
+            return ThemeProcessOutput(exitCode: 1, output: "missing ANSI colors")
+        }
+        let colors = orderedColors.joined(separator: "\n") + "\n"
         try colors.write(to: directory.appendingPathComponent("colors"), atomically: true, encoding: .utf8)
-        try "{\"colors\": {}}".write(to: directory.appendingPathComponent("colors.json"), atomically: true, encoding: .utf8)
-        try "color0='0x000000'".write(to: directory.appendingPathComponent("colors.sh"), atomically: true, encoding: .utf8)
+        var colorsJSON = theme
+        colorsJSON["checksum"] = "None"
+        colorsJSON["alpha"] = "100"
+        colorsJSON["wallpaper"] = theme["wallpaper"] ?? "fixture"
+        let colorsJSONData = try JSONSerialization.data(withJSONObject: colorsJSON, options: [])
+        try colorsJSONData.write(to: directory.appendingPathComponent("colors.json"))
+        let shell = "# Colors\n" + orderedColors.enumerated().map { "color\($0.offset)='\($0.element)'" }.joined(separator: "\n") + "\n"
+        try shell.write(to: directory.appendingPathComponent("colors.sh"), atomically: true, encoding: .utf8)
         let tilix: [String: Any] = [
             "cursor-background-color": "#101010",
-            "cursor-foreground-color": "#f0f0f0",
-            "foreground-color": "#f0f0f0",
-            "highlight-background-color": "#101010",
-            "highlight-foreground-color": "#f0f0f0",
+            "cursor-foreground-color": themeSpecial["cursor"] ?? "#f0f0f0",
+            "foreground-color": themeSpecial["foreground"] ?? "#f0f0f0",
+            "highlight-background-color": themeSpecial["cursor"] ?? "#101010",
+            "highlight-foreground-color": themeSpecial["foreground"] ?? "#f0f0f0",
             "use-cursor-color": false,
             "use-highlight-color": false,
         ]
