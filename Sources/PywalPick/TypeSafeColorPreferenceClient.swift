@@ -124,6 +124,15 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
         throw TypeSafeColorPreferenceError.invalidResponse
     }
 
+    static func estimatedRequestBytes(for candidates: MatugenThemeCandidateSet) -> Int {
+        (try? makeRequestBody(candidates: candidates, model: "jev-latest").count) ?? 0
+    }
+
+    static func estimatedInputTokens(for candidates: MatugenThemeCandidateSet) -> Int {
+        let bytes = estimatedRequestBytes(for: candidates)
+        return (bytes + 3) / 4
+    }
+
     private struct RequestBody: Encodable {
         let state: State
         let model: String
@@ -136,8 +145,6 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
         let scheme: String
         let background: String
         let foreground: String
-        let slots: [String: [MatugenColorCandidate]]
-        let cursor: [MatugenColorCandidate]
     }
 
     private struct Question: Encodable {
@@ -157,42 +164,49 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
     }
 
     private func makeRequestBody(candidates: MatugenThemeCandidateSet) throws -> Data {
+        try Self.makeRequestBody(candidates: candidates, model: model)
+    }
+
+    private static func makeRequestBody(
+        candidates: MatugenThemeCandidateSet,
+        model: String
+    ) throws -> Data {
         var questions: [String: Question] = [:]
         for (slot, options) in candidates.choices {
             questions[slot] = Question(
-                instructions: "Which candidate is the most balanced readable color for pywal slot \(slot)?",
+                instructions: "Pick the safest readable color for \(slot).",
                 criteria: criteria(for: options)
             )
         }
         questions["cursor"] = Question(
-            instructions: "Which candidate is the most usable readable cursor color?",
+            instructions: "Pick the safest readable cursor color.",
             criteria: criteria(for: candidates.cursorChoices)
         )
 
         let state = State(
-            purpose: "Choose among safe Matugen-derived colors for a terminal/browser theme. Do not invent colors.",
+            purpose: "Choose only supplied safe colors for a terminal/browser theme.",
             mode: candidates.mode.rawValue,
             scheme: candidates.schemeType.rawValue,
             background: candidates.background.hex,
-            foreground: candidates.foreground.hex,
-            slots: candidates.choices,
-            cursor: candidates.cursorChoices
+            foreground: candidates.foreground.hex
         )
         do {
-            return try JSONEncoder().encode(RequestBody(state: state, model: model, questions: questions))
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            return try encoder.encode(RequestBody(state: state, model: model, questions: questions))
         } catch {
             throw TypeSafeColorPreferenceError.decoding(error.localizedDescription)
         }
     }
 
-    private func criteria(for options: [MatugenColorCandidate]) -> [String: String] {
+    private static func criteria(for options: [MatugenColorCandidate]) -> [String: String] {
         Dictionary(uniqueKeysWithValues: options.map { option in
             let tone = option.tone.map { String(format: "%.0f", $0) } ?? "semantic"
             let contrast = String(format: "%.1f", option.contrast)
             let chroma = String(format: "%.2f", option.chroma)
             return (
                 option.id,
-                "Hex \(option.hex); family \(option.family); tone \(tone); contrast \(contrast):1; chroma \(chroma)."
+                "\(option.hex) \(option.family) t:\(tone) c:\(contrast) h:\(chroma)"
             )
         })
     }

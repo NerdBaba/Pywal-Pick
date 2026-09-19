@@ -18,6 +18,7 @@ public struct SettingsView: View {
     @State private var pendingCustomScript = ""
     @State private var typeSafeAPIKey = ""
     @State private var typeSafeKeyStatus: PathStatus?
+    @State private var typeSafeLastStatus: TypeSafePreferenceStatus?
     @State private var pathStatuses: [PickerType: PathStatus] = [:]
 
     // CLI state
@@ -68,6 +69,7 @@ public struct SettingsView: View {
         .frame(minWidth: 720, minHeight: 520)
         .onAppear {
             loadPendingPaths()
+            loadTypeSafeStatus()
             cliInstallPath = defaultCLIPath
             checkCLIInstallation()
         }
@@ -410,6 +412,46 @@ public struct SettingsView: View {
                     Text("Optional. TypeSafe ranks only Matugen-derived color candidates; the local selector remains the fallback. Only palette metadata is sent.")
                         .font(UIStyle.caption)
                         .foregroundStyle(.secondary)
+
+                    HStack(alignment: .firstTextBaseline) {
+                        Label("Last TypeSafe run", systemImage: "clock.arrow.circlepath")
+                            .font(UIStyle.caption.weight(.semibold))
+                        Spacer()
+                        Button("Refresh") {
+                            loadTypeSafeStatus()
+                        }
+                        .buttonStyle(.borderless)
+                        .font(UIStyle.caption)
+                    }
+
+                    if let typeSafeLastStatus {
+                        VStack(alignment: .leading, spacing: UIStyle.spaceXS) {
+                            Text(typeSafeLastStatus.summary)
+                                .font(UIStyle.caption)
+                            Text(typeSafeLastStatus.timestamp.formatted(
+                                date: .abbreviated,
+                                time: .shortened
+                            ))
+                            .font(UIStyle.caption)
+                            .foregroundStyle(.secondary)
+
+                            if !typeSafeLastStatus.selectedColors.isEmpty {
+                                Text(typeSafeLastStatus.selectedColors
+                                    .sorted { $0.key < $1.key }
+                                    .map { "\($0.key): \($0.value)" }
+                                    .joined(separator: " · "))
+                                    .font(UIStyle.mono)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                            }
+                        }
+                        .padding(.vertical, UIStyle.spaceXS)
+                    } else {
+                        Text("No Matugen run has recorded a TypeSafe result yet. Cache hits do not make another API request.")
+                            .font(UIStyle.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     Button {
                         openWindow(id: "matugen-colors")
@@ -761,6 +803,10 @@ public struct SettingsView: View {
         pendingMatugenBinary = settingsManager.config.matugenBinaryPath
         pendingCustomScript = settingsManager.config.customScriptPath
         typeSafeAPIKey = (try? TypeSafeAPIKeyStore.shared.load()) ?? ""
+    }
+
+    private func loadTypeSafeStatus() {
+        typeSafeLastStatus = TypeSafePreferenceStatusStore.shared.load()
     }
 
     private func applyPickedPathToPending(_ path: String, for type: PickerType) {

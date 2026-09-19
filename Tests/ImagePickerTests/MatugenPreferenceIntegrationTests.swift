@@ -3,6 +3,97 @@ import XCTest
 @testable import PywalPick
 
 final class MatugenPreferenceIntegrationTests: XCTestCase {
+    func testRankedStatusIsSavedWithoutSecretOrWallpaperPath() async throws {
+        let context = try Self.makeContext()
+        defer { try? FileManager.default.removeItem(at: context.root) }
+
+        let statusURL = context.root.appendingPathComponent("last-status.json")
+        let ranker = RecordingPreferenceRanker { candidates in
+            ["color2": candidates.choices["color2"]!.first!.hex]
+        }
+        let service = MatugenThemeService(
+            processRunner: context.runner,
+            cacheRoot: context.root.appendingPathComponent("cache"),
+            pywalCacheDirectory: context.root.appendingPathComponent("wal"),
+            configDirectory: context.root.appendingPathComponent("config"),
+            preferenceRanker: ranker,
+            apiKeyStore: FixedTypeSafeAPIKeyStore(value: "integration-secret"),
+            statusStore: TypeSafePreferenceStatusStore(fileURL: statusURL)
+        )
+        var config = AppConfig.default
+        config.matugenBinaryPath = "/bin/sh"
+        config.walBinaryPath = "/bin/sh"
+        config.matugenTypeSafeEnabled = true
+
+        _ = try await service.generate(sourceURL: context.sourceURL, inputURL: context.sourceURL, config: config)
+
+        let status = try XCTUnwrap(TypeSafePreferenceStatusStore(fileURL: statusURL).load())
+        XCTAssertEqual(status.outcome, .ranked)
+        XCTAssertEqual(status.selectedColors.count, 1)
+        XCTAssertGreaterThan(status.estimatedInputTokens, 0)
+        let raw = try String(contentsOf: statusURL)
+        XCTAssertFalse(raw.contains("integration-secret"))
+        XCTAssertFalse(raw.contains(context.sourceURL.path))
+    }
+
+    func testFallbackStatusIsSavedWhenRankingFails() async throws {
+        let context = try Self.makeContext()
+        defer { try? FileManager.default.removeItem(at: context.root) }
+
+        let statusURL = context.root.appendingPathComponent("last-status.json")
+        let service = MatugenThemeService(
+            processRunner: context.runner,
+            cacheRoot: context.root.appendingPathComponent("cache"),
+            pywalCacheDirectory: context.root.appendingPathComponent("wal"),
+            configDirectory: context.root.appendingPathComponent("config"),
+            preferenceRanker: RecordingPreferenceRanker { _ in
+                throw TypeSafeColorPreferenceError.invalidResponse
+            },
+            apiKeyStore: FixedTypeSafeAPIKeyStore(value: "integration-secret"),
+            statusStore: TypeSafePreferenceStatusStore(fileURL: statusURL)
+        )
+        var config = AppConfig.default
+        config.matugenBinaryPath = "/bin/sh"
+        config.walBinaryPath = "/bin/sh"
+        config.matugenTypeSafeEnabled = true
+
+        _ = try await service.generate(sourceURL: context.sourceURL, inputURL: context.sourceURL, config: config)
+
+        let status = try XCTUnwrap(TypeSafePreferenceStatusStore(fileURL: statusURL).load())
+        XCTAssertEqual(status.outcome, .fallback)
+        XCTAssertTrue(status.selectedColors.isEmpty)
+    }
+
+    func testCacheReuseStatusIsSavedAfterASecondGeneration() async throws {
+        let context = try Self.makeContext()
+        defer { try? FileManager.default.removeItem(at: context.root) }
+
+        let statusURL = context.root.appendingPathComponent("last-status.json")
+        let service = MatugenThemeService(
+            processRunner: context.runner,
+            cacheRoot: context.root.appendingPathComponent("cache"),
+            pywalCacheDirectory: context.root.appendingPathComponent("wal"),
+            configDirectory: context.root.appendingPathComponent("config"),
+            preferenceRanker: RecordingPreferenceRanker { candidates in
+                ["color2": candidates.choices["color2"]!.first!.hex]
+            },
+            apiKeyStore: FixedTypeSafeAPIKeyStore(value: "integration-secret"),
+            statusStore: TypeSafePreferenceStatusStore(fileURL: statusURL)
+        )
+        var config = AppConfig.default
+        config.matugenBinaryPath = "/bin/sh"
+        config.walBinaryPath = "/bin/sh"
+        config.matugenTypeSafeEnabled = true
+
+        _ = try await service.generate(sourceURL: context.sourceURL, inputURL: context.sourceURL, config: config)
+        let second = try await service.generate(sourceURL: context.sourceURL, inputURL: context.sourceURL, config: config)
+        XCTAssertTrue(second.reused)
+
+        let status = try XCTUnwrap(TypeSafePreferenceStatusStore(fileURL: statusURL).load())
+        XCTAssertEqual(status.outcome, .cacheReused)
+        XCTAssertEqual(status.selectedColors.count, 1)
+    }
+
     func testHighConfidenceChoiceIsPublishedAndStoredWithoutTheAPIKey() async throws {
         let context = try Self.makeContext()
         defer { try? FileManager.default.removeItem(at: context.root) }

@@ -31,7 +31,35 @@ final class TypeSafeColorPreferenceClientTests: XCTestCase {
         let questions = try XCTUnwrap(object["questions"] as? [String: Any])
         XCTAssertNotNil(questions["color1"])
         XCTAssertNotNil(questions["cursor"])
-        XCTAssertNil((object["state"] as? [String: Any])?["wallpaperPath"])
+        let state = try XCTUnwrap(object["state"] as? [String: Any])
+        XCTAssertNil(state["slots"])
+        XCTAssertNil(state["cursor"])
+        XCTAssertNil(state["wallpaperPath"])
+    }
+
+    func testRequestEstimateMatchesSerializedCompactPayload() async throws {
+        let transport = MockTypeSafeHTTPTransport(responses: [
+            .success(Self.response(answers: [:]))
+        ])
+        let client = TypeSafeColorPreferenceClient(
+            transport: transport,
+            retryBaseDelay: 0.001
+        )
+
+        let candidates = Self.candidates()
+        _ = try await client.rank(candidates: candidates, apiKey: "secret-key")
+
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first)
+        let body = try XCTUnwrap(request.httpBody)
+        XCTAssertEqual(
+            TypeSafeColorPreferenceClient.estimatedRequestBytes(for: candidates),
+            body.count
+        )
+        XCTAssertEqual(
+            TypeSafeColorPreferenceClient.estimatedInputTokens(for: candidates),
+            (body.count + 3) / 4
+        )
     }
 
     func testLowConfidenceAndUnknownChoicesAreIgnored() async throws {

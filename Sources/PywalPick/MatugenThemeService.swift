@@ -143,6 +143,11 @@ public struct MatugenThemeResult: Sendable {
 public actor MatugenThemeService {
     public static let shared = MatugenThemeService()
 
+    private struct PreferenceResolution: Sendable {
+        let colors: [String: String]
+        let status: TypeSafePreferenceStatus
+    }
+
     private struct Manifest: Codable, Equatable, Sendable {
         let mappingVersion: Int
         let sourcePath: String
@@ -180,6 +185,7 @@ public actor MatugenThemeService {
     private let configDirectory: URL
     private let preferenceRanker: any MatugenColorPreferenceRanking
     private let apiKeyStore: any TypeSafeAPIKeyStoring
+    private let statusStore: any TypeSafePreferenceStatusStoring
 
     public init(
         processRunner: any ThemeProcessRunning = SystemThemeProcessRunner(),
@@ -188,7 +194,8 @@ public actor MatugenThemeService {
         configDirectory: URL? = nil,
         fileManager: FileManager = .default,
         preferenceRanker: any MatugenColorPreferenceRanking = TypeSafeColorPreferenceClient.shared,
-        apiKeyStore: any TypeSafeAPIKeyStoring = TypeSafeAPIKeyStore.shared
+        apiKeyStore: any TypeSafeAPIKeyStoring = TypeSafeAPIKeyStore.shared,
+        statusStore: any TypeSafePreferenceStatusStoring = TypeSafePreferenceStatusStore.shared
     ) {
         self.processRunner = processRunner
         self.fileManager = fileManager
@@ -208,6 +215,7 @@ public actor MatugenThemeService {
             ?? applicationSupportDirectory.appendingPathComponent("PywalPick/Matugen")
         self.preferenceRanker = preferenceRanker
         self.apiKeyStore = apiKeyStore
+        self.statusStore = statusStore
     }
 
     public func generate(
@@ -260,6 +268,18 @@ public actor MatugenThemeService {
 
         try ensureDirectories()
         if try isReusable(manifest: manifest) {
+            if manifest.typeSafeEnabled {
+                let cachedColors = (try? cachedPreferredColors(for: manifest)) ?? [:]
+                let previous = statusStore.load()
+                try? statusStore.save(TypeSafePreferenceStatus(
+                    outcome: .cacheReused,
+                    selectedColors: cachedColors,
+                    requestByteCount: previous?.requestByteCount ?? 0,
+                    estimatedInputTokens: previous?.estimatedInputTokens ?? 0
+                ))
+            } else {
+                try? statusStore.save(TypeSafePreferenceStatus(outcome: .disabled))
+            }
             return MatugenThemeResult(
                 reused: true,
                 cacheDirectory: pywalCacheDirectory,
@@ -307,7 +327,7 @@ public actor MatugenThemeService {
         }
 
         let matugenJSON = Data(matugenOutput.standardOutput.utf8)
-        let preferredColors = try await preferredColors(
+        let preferenceResolution = try await preferredColors(
             from: matugenJSON,
             config: config,
             apiKey: configuredAPIKey,
@@ -318,7 +338,7 @@ public actor MatugenThemeService {
             wallpaperPath: inputURL.path,
             mode: config.matugenMode,
             schemeType: config.matugenSchemeType,
-            preferredColors: preferredColors
+            preferredColors: preferenceResolution.colors
         )
 
         let schemeURL = stagingDirectory.appendingPathComponent("matugen-pywal-scheme.json")
@@ -367,7 +387,7 @@ public actor MatugenThemeService {
             options: .atomic
         )
         let preferencesData = try JSONSerialization.data(
-            withJSONObject: preferredColors,
+            withJSONObject: preferenceResolution.colors,
             options: [.prettyPrinted, .sortedKeys]
         )
         try preferencesData.write(
@@ -380,6 +400,7 @@ public actor MatugenThemeService {
             options: .atomic
         )
         try publishGeneratedCache(from: stagingDirectory)
+        try? statusStore.save(preferenceResolution.status)
 
         return MatugenThemeResult(
             reused: false,
@@ -536,21 +557,56 @@ public actor MatugenThemeService {
         config: AppConfig,
         apiKey: String?,
         enabled: Bool
-    ) async throws -> [String: String] {
-        guard enabled, let apiKey else { return [:] }
+    ) async throws -> PreferenceResolution {
+        guard enabled, let apiKey else {
+            return PreferenceResolution(
+                colors: [:],
+                status: TypeSafePreferenceStatus(outcome: .disabled)
+            )
+        }
+        let candidates: MatugenThemeCandidateSet
         do {
-            let candidates = try MatugenThemeConverter.makeColorCandidates(
+            candidates = try MatugenThemeConverter.makeColorCandidates(
                 from: data,
                 mode: config.matugenMode,
                 schemeType: config.matugenSchemeType
             )
-            let ranked = try await preferenceRanker.rank(candidates: candidates, apiKey: apiKey)
-            return candidates.acceptedPreferences(ranked)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             print("⚠ TypeSafe ranking unavailable; using local Matugen colors: \(error.localizedDescription)")
-            return [:]
+            return PreferenceResolution(
+                colors: [:],
+                status: TypeSafePreferenceStatus(outcome: .fallback)
+            )
+        }
+
+        let requestByteCount = TypeSafeColorPreferenceClient.estimatedRequestBytes(for: candidates)
+        let estimatedInputTokens = TypeSafeColorPreferenceClient.estimatedInputTokens(for: candidates)
+        do {
+            let ranked = try await preferenceRanker.rank(candidates: candidates, apiKey: apiKey)
+            let colors = candidates.acceptedPreferences(ranked)
+            return PreferenceResolution(
+                colors: colors,
+                status: TypeSafePreferenceStatus(
+                    outcome: .ranked,
+                    selectedColors: colors,
+                    requestByteCount: requestByteCount,
+                    estimatedInputTokens: estimatedInputTokens
+                )
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            print("⚠ TypeSafe ranking unavailable; using local Matugen colors: \(error.localizedDescription)")
+            return PreferenceResolution(
+                colors: [:],
+                status: TypeSafePreferenceStatus(
+                    outcome: .fallback,
+                    requestByteCount: requestByteCount,
+                    estimatedInputTokens: estimatedInputTokens
+                )
+            )
         }
     }
 
