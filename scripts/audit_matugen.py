@@ -45,6 +45,12 @@ def contrast(a, b):
     return (y + .05) / (x + .05)
 
 
+def near_extreme(color):
+    """Match ThemeColor.isNearExtreme without needing a color library."""
+    value = luminance(color)
+    return value <= .02 or value >= .98
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--count', type=int, default=15)
@@ -143,6 +149,7 @@ if args[1] == "convert" {
          REPO / 'Sources/PywalPick/MatugenPaletteDocument.swift',
          REPO / 'Sources/PywalPick/ThemeColor.swift',
          REPO / 'Sources/PywalPick/MatugenToneSelector.swift',
+         REPO / 'Sources/PywalPick/MatugenColorCandidate.swift',
          REPO / 'Sources/PywalPick/MatugenThemeConverter.swift', '-o', executable], timeout=180)
     matugen_config = output / 'config.toml'
     matugen_config.write_text('[config]\nversion_check = false\ncaching = false\n'
@@ -189,6 +196,12 @@ if args[1] == "convert" {
                     metrics = {'foreground': contrast(special['foreground'], bg),
                                'cursor': contrast(special['cursor'], bg)}
                     metrics.update({k: contrast(v, bg) for k, v in colors.items()})
+                    metrics['near_extreme_ansi_slots'] = sum(
+                        near_extreme(value) for value in colors.values()
+                    )
+                    metrics['duplicate_ansi_slot_groups'] = sum(
+                        count > 1 for count in collections.Counter(colors.values()).values()
+                    )
                     tilix = json.loads((case / 'colors-tilix.json').read_text())
                     metrics['tilix_selection'] = contrast(tilix['highlight-foreground-color'],
                                                            tilix['highlight-background-color'])
@@ -226,6 +239,10 @@ if args[1] == "convert" {
     summary = dict(cases=len(rows), failed_cases=sum(bool(r['failures']) for r in rows),
                    pipeline_errors=sum(any(f.startswith('pipeline error:') for f in r['failures']) for r in rows),
                    ghostty_invisible_selections=sum(r.get('ghostty_selection_invisible', False) for r in rows),
+                   near_extreme_ansi_slots=sum(r.get('metrics', {}).get('near_extreme_ansi_slots', 0)
+                                               for r in rows),
+                   duplicate_ansi_slot_groups=sum(r.get('metrics', {}).get('duplicate_ansi_slot_groups', 0)
+                                                  for r in rows),
                    failure_counts=dict(collections.Counter(f.split(':')[0] for r in rows for f in r['failures'])),
                    seconds=round(time.monotonic() - start, 2))
     (output / 'results.json').write_text(json.dumps(dict(manifest=metadata, summary=summary, results=rows), indent=2))
@@ -239,7 +256,9 @@ if args[1] == "convert" {
         samples = ''.join(f'<div style="color:{colors[f"color{i}"]}">ANSI {i:02d}: The quick brown fox 0123456789 '
                           f'({row["metrics"][f"color{i}"]:.2f}:1)</div>' for i in range(16))
         cards.append(f'<article style="background:{special["background"]};color:{special["foreground"]}">'
-                     f'<h3>{title}</h3><p>Default foreground; cursor <b style="background:{special["cursor"]}">▌</b></p>'
+                     f'<h3>{title}</h3><p>Default foreground; cursor <b style="background:{special["cursor"]}">▌</b>; '
+                     f'near-extreme ANSI slots: {row["metrics"]["near_extreme_ansi_slots"]}; '
+                     f'duplicate slot groups: {row["metrics"]["duplicate_ansi_slot_groups"]}</p>'
                      f'{samples}<details><summary>Findings</summary>{html.escape(str(row["failures"]))}</details></article>')
     (output / 'preview.html').write_text('<!doctype html><meta charset="utf-8"><title>Matugen audit</title>'
         '<style>body{font:14px monospace;background:#888;display:grid;grid-template-columns:repeat(2,1fr);gap:12px}'
