@@ -44,7 +44,8 @@ struct MatugenThemeConverter {
         from data: Data,
         wallpaperPath: String,
         mode: MatugenMode,
-        schemeType: MatugenSchemeType = .schemeTonalSpot
+        schemeType: MatugenSchemeType = .schemeTonalSpot,
+        preferredColors: [String: String] = [:]
     ) throws -> Data {
         let document = try makeDocument(from: data)
         guard !document.semanticColors.isEmpty else {
@@ -54,8 +55,8 @@ struct MatugenThemeConverter {
         let background = try color(named: "surface", from: document.semanticColors, mode: mode)
         let foreground = try color(named: "on_surface", from: document.semanticColors, mode: mode)
         let accent = try materialAccent(from: document.semanticColors, mode: mode)
-        let backgroundColor = try ThemeColor(hex: background)
         var pywalColors: [String: String]
+        var cursor = accent.primary
 
         if document.tonalPalettes.isEmpty {
             // Keep old/hand-authored Matugen JSON usable. Current Matugen output
@@ -74,12 +75,21 @@ struct MatugenThemeConverter {
             pywalColors["color7"] = foreground
             pywalColors["color15"] = try color(named: "on_background", from: document.semanticColors, mode: mode)
         } else {
-            pywalColors = try makeTonalColors(
+            let candidates = try MatugenColorCandidateBuilder.build(
                 document: document,
-                background: backgroundColor,
                 mode: mode,
                 schemeType: schemeType
             )
+            pywalColors = candidates.localColors
+            for (slot, value) in preferredColors {
+                if slot == "cursor" {
+                    if candidates.acceptsCursor(value) {
+                        cursor = value
+                    }
+                } else if candidates.accepts(value, for: slot) {
+                    pywalColors[slot] = value
+                }
+            }
         }
 
         let scheme: [String: Any] = [
@@ -88,7 +98,7 @@ struct MatugenThemeConverter {
             "special": [
                 "background": background,
                 "foreground": foreground,
-                "cursor": accent.primary,
+                "cursor": cursor,
             ],
             "colors": pywalColors,
         ]
@@ -101,6 +111,22 @@ struct MatugenThemeConverter {
         } catch {
             throw MatugenThemeError.invalidJSON(error.localizedDescription)
         }
+    }
+
+    static func makeColorCandidates(
+        from data: Data,
+        mode: MatugenMode,
+        schemeType: MatugenSchemeType
+    ) throws -> MatugenThemeCandidateSet {
+        let document = try makeDocument(from: data)
+        guard !document.tonalPalettes.isEmpty else {
+            throw MatugenThemeError.missingColor("palettes")
+        }
+        return try MatugenColorCandidateBuilder.build(
+            document: document,
+            mode: mode,
+            schemeType: schemeType
+        )
     }
 
     private static func makeTonalColors(
@@ -254,7 +280,7 @@ struct MatugenThemeConverter {
         }
     }
 
-    private static func color(
+    static func color(
         named name: String,
         from colors: [String: MatugenPaletteColor],
         mode: MatugenMode

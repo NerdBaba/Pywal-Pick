@@ -42,9 +42,30 @@ struct ThemeColor: Equatable, Sendable {
         return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722
     }
 
+    /// The channel spread in sRGB space. This is a compact measure of how
+    /// colorful a candidate is, without introducing another color library.
+    var chroma: Double {
+        let components = rgbComponents
+        return (components.max() ?? 0) - (components.min() ?? 0)
+    }
+
+    /// Pure-ish black and white are technically readable in many pairings but
+    /// make poor ANSI accents when the Matugen family offers alternatives.
+    var isNearExtreme: Bool {
+        relativeLuminance <= 0.02 || relativeLuminance >= 0.98
+    }
+
     func contrastRatio(to other: ThemeColor) -> Double {
         let lighter = max(relativeLuminance, other.relativeLuminance)
         let darker = min(relativeLuminance, other.relativeLuminance)
         return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private var rgbComponents: [Double] {
+        stride(from: 1, through: 5, by: 2).map { offset in
+            let start = hex.index(hex.startIndex, offsetBy: offset)
+            let end = hex.index(start, offsetBy: 2)
+            return Double(Int(hex[start..<end], radix: 16) ?? 0) / 255
+        }
     }
 }
