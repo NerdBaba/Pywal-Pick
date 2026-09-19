@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public struct ThemeProcessOutput: Sendable {
     public let exitCode: Int32
@@ -160,25 +161,34 @@ public actor MatugenThemeService {
         let mode: MatugenMode
         let schemeType: MatugenSchemeType
         let contrast: Double
+        let preferenceMappingVersion: Int
+        let typeSafeEnabled: Bool
+        let typeSafeKeyFingerprint: String
     }
 
     private static let requiredFiles = ["colors", "colors.json", "colors.sh"]
     private static let manifestName = "pywalpick-matugen-manifest.json"
     private static let rawMatugenColorsName = "matugen-colors.json"
-    private static let mappingVersion = 2
+    private static let preferencesName = "pywalpick-matugen-preferences.json"
+    private static let mappingVersion = 3
+    private static let preferenceMappingVersion = 1
 
     private let processRunner: any ThemeProcessRunning
     private let fileManager: FileManager
     private let cacheRoot: URL
     private let pywalCacheDirectory: URL
     private let configDirectory: URL
+    private let preferenceRanker: any MatugenColorPreferenceRanking
+    private let apiKeyStore: any TypeSafeAPIKeyStoring
 
     public init(
         processRunner: any ThemeProcessRunning = SystemThemeProcessRunner(),
         cacheRoot: URL? = nil,
         pywalCacheDirectory: URL? = nil,
         configDirectory: URL? = nil,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        preferenceRanker: any MatugenColorPreferenceRanking = TypeSafeColorPreferenceClient.shared,
+        apiKeyStore: any TypeSafeAPIKeyStoring = TypeSafeAPIKeyStore.shared
     ) {
         self.processRunner = processRunner
         self.fileManager = fileManager
@@ -196,6 +206,8 @@ public actor MatugenThemeService {
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".cache/wal")
         self.configDirectory = configDirectory
             ?? applicationSupportDirectory.appendingPathComponent("PywalPick/Matugen")
+        self.preferenceRanker = preferenceRanker
+        self.apiKeyStore = apiKeyStore
     }
 
     public func generate(
@@ -233,12 +245,17 @@ public actor MatugenThemeService {
             name: "wal"
         )
 
+        let configuredAPIKey = (try? apiKeyStore.load())?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let typeSafeEnabled = config.matugenTypeSafeEnabled && !(configuredAPIKey?.isEmpty ?? true)
         let manifest = try makeManifest(
             sourceURL: sourceURL,
             inputURL: inputURL,
             matugenPath: matugenPath,
             walPath: walPath,
-            config: config
+            config: config,
+            typeSafeEnabled: typeSafeEnabled,
+            typeSafeKeyFingerprint: typeSafeEnabled ? Self.keyFingerprint(configuredAPIKey!) : ""
         )
 
         try ensureDirectories()
@@ -290,11 +307,18 @@ public actor MatugenThemeService {
         }
 
         let matugenJSON = Data(matugenOutput.standardOutput.utf8)
+        let preferredColors = try await preferredColors(
+            from: matugenJSON,
+            config: config,
+            apiKey: configuredAPIKey,
+            enabled: typeSafeEnabled
+        )
         let schemeJSON = try MatugenThemeConverter.makePywalScheme(
             from: matugenJSON,
             wallpaperPath: inputURL.path,
             mode: config.matugenMode,
-            schemeType: config.matugenSchemeType
+            schemeType: config.matugenSchemeType,
+            preferredColors: preferredColors
         )
 
         let schemeURL = stagingDirectory.appendingPathComponent("matugen-pywal-scheme.json")
@@ -342,6 +366,14 @@ public actor MatugenThemeService {
             to: stagingDirectory.appendingPathComponent(Self.rawMatugenColorsName),
             options: .atomic
         )
+        let preferencesData = try JSONSerialization.data(
+            withJSONObject: preferredColors,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try preferencesData.write(
+            to: stagingDirectory.appendingPathComponent(Self.preferencesName),
+            options: .atomic
+        )
         let manifestData = try JSONEncoder().encode(manifest)
         try manifestData.write(
             to: stagingDirectory.appendingPathComponent(Self.manifestName),
@@ -373,7 +405,9 @@ public actor MatugenThemeService {
         inputURL: URL,
         matugenPath: String,
         walPath: String,
-        config: AppConfig
+        config: AppConfig,
+        typeSafeEnabled: Bool,
+        typeSafeKeyFingerprint: String
     ) throws -> Manifest {
         let values = try sourceURL.resourceValues(forKeys: [
             .fileSizeKey,
@@ -409,7 +443,10 @@ public actor MatugenThemeService {
             inputModificationDate: inputValues.contentModificationDate?.timeIntervalSince1970 ?? 0,
             mode: config.matugenMode,
             schemeType: config.matugenSchemeType,
-            contrast: config.matugenContrast
+            contrast: config.matugenContrast,
+            preferenceMappingVersion: Self.preferenceMappingVersion,
+            typeSafeEnabled: typeSafeEnabled,
+            typeSafeKeyFingerprint: typeSafeKeyFingerprint
         )
     }
 
@@ -458,11 +495,13 @@ public actor MatugenThemeService {
         }) else { return false }
 
         guard let rawData = try? Data(contentsOf: pywalCacheDirectory.appendingPathComponent(Self.rawMatugenColorsName)),
+              let preferredColors = try? cachedPreferredColors(for: cached),
               let scheme = try? MatugenThemeConverter.makePywalScheme(
                   from: rawData,
                   wallpaperPath: manifest.inputPath,
                   mode: manifest.mode,
-                  schemeType: manifest.schemeType
+                  schemeType: manifest.schemeType,
+                  preferredColors: preferredColors
               )
         else { return false }
         do {
@@ -475,6 +514,49 @@ public actor MatugenThemeService {
         } catch {
             return false
         }
+    }
+
+    private func cachedPreferredColors(for manifest: Manifest) throws -> [String: String] {
+        let url = pywalCacheDirectory.appendingPathComponent(Self.preferencesName)
+        guard fileManager.fileExists(atPath: url.path) else {
+            if manifest.typeSafeEnabled {
+                throw MatugenThemeServiceError.cacheValidationFailed("missing \(Self.preferencesName)")
+            }
+            return [:]
+        }
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+        guard let colors = object as? [String: String] else {
+            throw MatugenThemeServiceError.cacheValidationFailed("invalid \(Self.preferencesName)")
+        }
+        return colors
+    }
+
+    private func preferredColors(
+        from data: Data,
+        config: AppConfig,
+        apiKey: String?,
+        enabled: Bool
+    ) async throws -> [String: String] {
+        guard enabled, let apiKey else { return [:] }
+        do {
+            let candidates = try MatugenThemeConverter.makeColorCandidates(
+                from: data,
+                mode: config.matugenMode,
+                schemeType: config.matugenSchemeType
+            )
+            return try await preferenceRanker.rank(candidates: candidates, apiKey: apiKey)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            print("⚠ TypeSafe ranking unavailable; using local Matugen colors: \(error.localizedDescription)")
+            return [:]
+        }
+    }
+
+    private static func keyFingerprint(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     private func resetDirectory(_ directory: URL) throws {

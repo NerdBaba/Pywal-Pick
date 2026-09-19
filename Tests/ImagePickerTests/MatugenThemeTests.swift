@@ -458,7 +458,7 @@ final class MatugenThemeTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
-    private static let matugenFixture: String = {
+    static let matugenFixture: String = {
         let roleNames = [
             "background", "error", "error_container", "inverse_on_surface", "inverse_primary",
             "inverse_surface", "on_background", "on_error", "on_error_container", "on_primary",
@@ -559,7 +559,7 @@ final class MatugenThemeTests: XCTestCase {
     }
 }
 
-private actor RecordingThemeProcessRunner: ThemeProcessRunning {
+actor RecordingThemeProcessRunner: ThemeProcessRunning {
     let matugenOutput: String
     let matugenDiagnostics: String
     private(set) var callCount = 0
