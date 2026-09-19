@@ -58,6 +58,11 @@ public enum TypeSafeColorPreferenceError: LocalizedError, Sendable, Equatable {
 public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Sendable {
     public static let shared = TypeSafeColorPreferenceClient()
 
+    // Matugen has already filtered for contrast and extremes and sorted by
+    // tone, so two nearby candidates preserve a safe local fallback while
+    // giving TypeSafe a meaningful aesthetic choice.
+    private static let maximumOptionsPerQuestion = 2
+
     private let transport: any TypeSafeHTTPTransport
     private let endpoint: URL
     private let model: String
@@ -89,7 +94,8 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
         request.httpMethod = "POST"
         request.setValue("Bearer \(trimmedKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try makeRequestBody(candidates: candidates)
+        let preparedRequest = try makeRequestBody(candidates: candidates)
+        request.httpBody = preparedRequest.data
 
         for attempt in 0..<3 {
             let data: Data
@@ -105,7 +111,11 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
             }
             switch httpResponse.statusCode {
             case 200..<300:
-                return try acceptedChoices(from: data, candidates: candidates)
+                return try acceptedChoices(
+                    from: data,
+                    candidates: candidates,
+                    optionIDs: preparedRequest.optionIDs
+                )
             case 401:
                 throw TypeSafeColorPreferenceError.unauthorized
             case 429, 529:
@@ -125,7 +135,7 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
     }
 
     static func estimatedRequestBytes(for candidates: MatugenThemeCandidateSet) -> Int {
-        (try? makeRequestBody(candidates: candidates, model: "jev-latest").count) ?? 0
+        (try? makeRequestBody(candidates: candidates, model: "jev-latest").data.count) ?? 0
     }
 
     static func estimatedInputTokens(for candidates: MatugenThemeCandidateSet) -> Int {
@@ -133,18 +143,20 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
         return (bytes + 3) / 4
     }
 
+    private struct PreparedRequest: Sendable {
+        let data: Data
+        let optionIDs: [String: [String: String]]
+    }
+
     private struct RequestBody: Encodable {
-        let state: State
+        let state: String
         let model: String
         let questions: [String: Question]
     }
 
-    private struct State: Encodable {
-        let purpose: String
-        let mode: String
-        let scheme: String
-        let background: String
-        let foreground: String
+    private struct CompactOption: Sendable {
+        let key: String
+        let candidate: MatugenColorCandidate
     }
 
     private struct Question: Encodable {
@@ -163,57 +175,93 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
         let confidence: Double?
     }
 
-    private func makeRequestBody(candidates: MatugenThemeCandidateSet) throws -> Data {
+    private func makeRequestBody(candidates: MatugenThemeCandidateSet) throws -> PreparedRequest {
         try Self.makeRequestBody(candidates: candidates, model: model)
     }
 
     private static func makeRequestBody(
         candidates: MatugenThemeCandidateSet,
         model: String
-    ) throws -> Data {
+    ) throws -> PreparedRequest {
         var questions: [String: Question] = [:]
-        for (slot, options) in candidates.choices {
+        var optionIDs: [String: [String: String]] = [:]
+        var compactOptions: [String: [CompactOption]] = [:]
+
+        for slot in candidates.choices.keys.sorted() {
+            guard let options = candidates.choices[slot] else { continue }
+            let selected = options.prefix(maximumOptionsPerQuestion).enumerated().map { index, option in
+                CompactOption(key: compactOptionKey(index), candidate: option)
+            }
+            compactOptions[slot] = selected
             questions[slot] = Question(
-                instructions: "Pick the safest readable color for \(slot).",
-                criteria: criteria(for: options)
+                instructions: "Readable \(compactSlotName(slot))?",
+                criteria: Dictionary(uniqueKeysWithValues: selected.map { ($0.key, "") })
             )
+            optionIDs[slot] = Dictionary(uniqueKeysWithValues: selected.map { ($0.key, $0.candidate.id) })
+        }
+
+        let selectedCursor = candidates.cursorChoices.prefix(maximumOptionsPerQuestion).enumerated().map { index, option in
+            CompactOption(key: compactOptionKey(index), candidate: option)
         }
         questions["cursor"] = Question(
-            instructions: "Pick the safest readable cursor color.",
-            criteria: criteria(for: candidates.cursorChoices)
+            instructions: "Readable x?",
+            criteria: Dictionary(uniqueKeysWithValues: selectedCursor.map { ($0.key, "") })
         )
+        compactOptions["cursor"] = selectedCursor
+        optionIDs["cursor"] = Dictionary(uniqueKeysWithValues: selectedCursor.map { ($0.key, $0.candidate.id) })
 
-        let state = State(
-            purpose: "Choose only supplied safe colors for a terminal/browser theme.",
-            mode: candidates.mode.rawValue,
-            scheme: candidates.schemeType.rawValue,
-            background: candidates.background.hex,
-            foreground: candidates.foreground.hex
-        )
+        let state = compactState(candidates: candidates, options: compactOptions)
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
-            return try encoder.encode(RequestBody(state: state, model: model, questions: questions))
+            return PreparedRequest(
+                data: try encoder.encode(RequestBody(state: state, model: model, questions: questions)),
+                optionIDs: optionIDs
+            )
         } catch {
             throw TypeSafeColorPreferenceError.decoding(error.localizedDescription)
         }
     }
 
-    private static func criteria(for options: [MatugenColorCandidate]) -> [String: String] {
-        Dictionary(uniqueKeysWithValues: options.map { option in
-            let tone = option.tone.map { String(format: "%.0f", $0) } ?? "semantic"
-            let contrast = String(format: "%.1f", option.contrast)
-            let chroma = String(format: "%.2f", option.chroma)
-            return (
-                option.id,
-                "\(option.hex) \(option.family) t:\(tone) c:\(contrast) h:\(chroma)"
-            )
-        })
+    private static func compactOptionKey(_ index: Int) -> String {
+        String(UnicodeScalar(97 + index)!)
+    }
+
+    private static func compactState(
+        candidates: MatugenThemeCandidateSet,
+        options: [String: [CompactOption]]
+    ) -> String {
+        let slotDescriptions = options.keys.sorted().compactMap { slot -> String? in
+            guard let choices = options[slot], !choices.isEmpty else { return nil }
+            let values = choices.map { option in
+                return "\(option.key)=\(option.candidate.hex)"
+            }
+            return "\(compactSlotName(slot))[\(values.joined(separator: ","))]"
+        }
+
+        return [
+            "theme=\(candidates.mode.rawValue)/\(candidates.schemeType.rawValue)",
+            "bg=\(candidates.background.hex)",
+            "fg=\(candidates.foreground.hex)",
+            "roles=e:error,t:tertiary,s:secondary,p:primary,n:neutral slots=1e,2t,3s,4p,5s,6t,8n,9e,10t,11s,12p,13s,14t,xp",
+            "fmt=id=hex",
+            "safe=contrast>=4.5",
+            slotDescriptions.joined(separator: ";"),
+        ]
+        .joined(separator: " ")
+    }
+
+    private static func compactSlotName(_ slot: String) -> String {
+        if slot == "cursor" {
+            return "x"
+        }
+        return String(slot.dropFirst("color".count))
     }
 
     private func acceptedChoices(
         from data: Data,
-        candidates: MatugenThemeCandidateSet
+        candidates: MatugenThemeCandidateSet,
+        optionIDs: [String: [String: String]]
     ) throws -> [String: String] {
         let response: ResponseBody
         do {
@@ -230,11 +278,12 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
                   confidence >= minimumConfidence
             else { continue }
 
+            let candidateID = optionIDs[slot]?[choice] ?? choice
             if slot == "cursor" {
-                if let candidate = candidates.cursorChoices.first(where: { $0.id == choice }) {
+                if let candidate = candidates.cursorChoices.first(where: { $0.id == candidateID }) {
                     accepted[slot] = candidate.hex
                 }
-            } else if let candidate = candidates.choices[slot]?.first(where: { $0.id == choice }) {
+            } else if let candidate = candidates.choices[slot]?.first(where: { $0.id == candidateID }) {
                 accepted[slot] = candidate.hex
             }
         }

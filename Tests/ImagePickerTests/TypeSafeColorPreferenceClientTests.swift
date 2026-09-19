@@ -7,8 +7,8 @@ final class TypeSafeColorPreferenceClientTests: XCTestCase {
         let transport = MockTypeSafeHTTPTransport(responses: [
             .success(Self.response(
                 answers: [
-                    "color1": Self.choiceAnswer(choice: "red", confidence: 0.92),
-                    "cursor": Self.choiceAnswer(choice: "blue", confidence: 0.88),
+                    "color1": Self.choiceAnswer(choice: "a", confidence: 0.92),
+                    "cursor": Self.choiceAnswer(choice: "a", confidence: 0.88),
                 ]
             ))
         ])
@@ -31,10 +31,13 @@ final class TypeSafeColorPreferenceClientTests: XCTestCase {
         let questions = try XCTUnwrap(object["questions"] as? [String: Any])
         XCTAssertNotNil(questions["color1"])
         XCTAssertNotNil(questions["cursor"])
-        let state = try XCTUnwrap(object["state"] as? [String: Any])
-        XCTAssertNil(state["slots"])
-        XCTAssertNil(state["cursor"])
-        XCTAssertNil(state["wallpaperPath"])
+        let state = try XCTUnwrap(object["state"] as? String)
+        XCTAssertTrue(state.contains("1["))
+        XCTAssertTrue(state.contains("#cc3344"))
+        XCTAssertFalse(state.contains("wallpaperPath"))
+        let color1 = try XCTUnwrap(questions["color1"] as? [String: Any])
+        let criteria = try XCTUnwrap(color1["criteria"] as? [String: Any])
+        XCTAssertLessThanOrEqual(criteria.count, 2)
     }
 
     func testRequestEstimateMatchesSerializedCompactPayload() async throws {
@@ -59,6 +62,31 @@ final class TypeSafeColorPreferenceClientTests: XCTestCase {
         XCTAssertEqual(
             TypeSafeColorPreferenceClient.estimatedInputTokens(for: candidates),
             (body.count + 3) / 4
+        )
+    }
+
+    func testDenseCompactRequestStaysBelow500EstimatedTokens() {
+        let base = Self.candidates()
+        let red = base.choices["color1"]!.first!
+        let blue = base.cursorChoices.first!
+        let slots = [
+            "color1", "color2", "color3", "color4", "color5", "color6",
+            "color8", "color9", "color10", "color11", "color12", "color13", "color14",
+        ]
+        let dense = MatugenThemeCandidateSet(
+            mode: base.mode,
+            schemeType: base.schemeType,
+            background: base.background,
+            foreground: base.foreground,
+            choices: Dictionary(uniqueKeysWithValues: slots.map { ($0, [red, blue]) }),
+            cursorChoices: [blue],
+            localColors: base.localColors,
+            localCursor: base.localCursor
+        )
+
+        XCTAssertLessThan(
+            TypeSafeColorPreferenceClient.estimatedInputTokens(for: dense),
+            500
         )
     }
 
