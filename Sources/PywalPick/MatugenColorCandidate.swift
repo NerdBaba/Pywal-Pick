@@ -1,18 +1,20 @@
 import Foundation
 
 /// A safe color that can be assigned to one pywal role.
-struct MatugenColorCandidate: Codable, Equatable, Sendable, Identifiable {
-    let id: String
-    let hex: String
-    let family: String
-    let tone: Double?
-    let contrast: Double
-    let chroma: Double
-    let nearExtreme: Bool
+public struct MatugenColorCandidate: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let hex: String
+    public let family: String
+    public let tone: Double?
+    public let contrast: Double
+    public let chroma: Double
+    public let nearExtreme: Bool
 }
 
 /// The complete set of Matugen-derived choices for one generated theme.
-struct MatugenThemeCandidateSet: Equatable, Sendable {
+public struct MatugenThemeCandidateSet: Equatable, Sendable {
+    let mode: MatugenMode
+    let schemeType: MatugenSchemeType
     let background: ThemeColor
     let foreground: ThemeColor
     let choices: [String: [MatugenColorCandidate]]
@@ -133,6 +135,8 @@ enum MatugenColorCandidateBuilder {
         }
 
         return MatugenThemeCandidateSet(
+            mode: mode,
+            schemeType: schemeType,
             background: background,
             foreground: foreground,
             choices: choices,
