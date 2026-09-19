@@ -81,7 +81,7 @@ struct MatugenThemeConverter {
                 schemeType: schemeType
             )
             pywalColors = candidates.localColors
-            for (slot, value) in preferredColors {
+            for (slot, value) in candidates.acceptedPreferences(preferredColors) {
                 if slot == "cursor" {
                     if candidates.acceptsCursor(value) {
                         cursor = value
@@ -127,80 +127,6 @@ struct MatugenThemeConverter {
             mode: mode,
             schemeType: schemeType
         )
-    }
-
-    private static func makeTonalColors(
-        document: MatugenPaletteDocument,
-        background: ThemeColor,
-        mode: MatugenMode,
-        schemeType: MatugenSchemeType
-    ) throws -> [String: String] {
-        let dark = mode == .dark
-        let normalTone = dark ? 70.0 : 40.0
-        let brightTone = dark ? 80.0 : 30.0
-        let allNeutral = schemeType == .schemeMonochrome || schemeType == .schemeNeutral
-        let families: [String: String] = allNeutral
-            ? ["error": "neutral", "tertiary": "neutral", "secondary": "neutral", "primary": "neutral"]
-            : ["error": "error", "tertiary": "tertiary", "secondary": "secondary", "primary": "primary"]
-
-        func tone(_ family: String, _ target: Double) throws -> String {
-            let resolvedFamily = families[family] ?? family
-            guard let palette = document.tonalPalettes[resolvedFamily] else {
-                throw MatugenThemeError.missingColor("palettes.\(resolvedFamily)")
-            }
-            return try MatugenToneSelector.select(
-                family: palette,
-                familyName: resolvedFamily,
-                targetTone: target,
-                background: background,
-                minimumContrast: 4.5
-            )
-        }
-
-        func readableSemantic(_ name: String) throws -> String? {
-            guard document.semanticColors[name] != nil else { return nil }
-            let value = try color(named: name, from: document.semanticColors, mode: mode)
-            let parsed = try ThemeColor(hex: value)
-            return parsed.contrastRatio(to: background) >= 4.5 ? parsed.hex : nil
-        }
-
-        let onSurface = try color(named: "on_surface", from: document.semanticColors, mode: mode)
-        let onSurfaceVariant = try color(named: "on_surface_variant", from: document.semanticColors, mode: mode)
-        var colors: [String: String] = [
-            "color0": background.hex,
-            "color7": onSurface,
-            "color15": onSurface,
-        ]
-        if let variant = try? ThemeColor(hex: onSurfaceVariant),
-           variant.contrastRatio(to: background) >= 4.5 {
-            colors["color8"] = variant.hex
-        } else {
-            colors["color8"] = try tone("neutral", brightTone)
-        }
-
-        let slots: [(String, String, Double, String?)] = [
-            ("color1", "error", normalTone, allNeutral ? nil : "error"),
-            ("color2", "tertiary", normalTone, allNeutral ? nil : "tertiary"),
-            ("color3", "secondary", normalTone, allNeutral ? nil : "secondary"),
-            ("color4", "primary", normalTone, allNeutral ? nil : "primary"),
-            ("color5", "secondary", brightTone, nil),
-            ("color6", "tertiary", brightTone, nil),
-            ("color9", "error", brightTone, nil),
-            ("color10", "tertiary", brightTone, nil),
-            ("color11", "secondary", brightTone, nil),
-            ("color12", "primary", brightTone, nil),
-            ("color13", "secondary", brightTone, nil),
-            ("color14", "tertiary", brightTone, nil),
-        ]
-        for (slot, family, target, semanticName) in slots {
-            if let semanticName,
-               let semanticValue = try readableSemantic(semanticName) {
-                colors[slot] = semanticValue
-            } else {
-                colors[slot] = try tone(family, target)
-            }
-        }
-        return colors
     }
 
     static func applyGeneratedThemeOverrides(

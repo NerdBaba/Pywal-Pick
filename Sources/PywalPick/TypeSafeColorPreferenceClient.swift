@@ -224,6 +224,6 @@ public struct TypeSafeColorPreferenceClient: MatugenColorPreferenceRanking, Send
                 accepted[slot] = candidate.hex
             }
         }
-        return accepted
+        return candidates.acceptedPreferences(accepted)
     }
 }

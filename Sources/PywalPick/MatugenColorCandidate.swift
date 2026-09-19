@@ -29,6 +29,32 @@ public struct MatugenThemeCandidateSet: Equatable, Sendable {
     func acceptsCursor(_ hex: String) -> Bool {
         cursorChoices.contains(where: { $0.hex == hex })
     }
+
+    /// Keeps only candidate-backed choices and drops avoidable duplicate
+    /// assignments from a remote ranking response. The local palette remains
+    /// in place for any rejected slot.
+    func acceptedPreferences(_ preferred: [String: String]) -> [String: String] {
+        var accepted: [String: String] = [:]
+        var used = Set<String>()
+
+        for slot in choices.keys.sorted() {
+            guard let value = preferred[slot],
+                  let options = choices[slot],
+                  options.contains(where: { $0.hex == value })
+            else { continue }
+
+            if used.contains(value), options.contains(where: { $0.hex != value && !used.contains($0.hex) }) {
+                continue
+            }
+            accepted[slot] = value
+            used.insert(value)
+        }
+
+        if let cursor = preferred["cursor"], acceptsCursor(cursor) {
+            accepted["cursor"] = cursor
+        }
+        return accepted
+    }
 }
 
 enum MatugenColorCandidateBuilder {

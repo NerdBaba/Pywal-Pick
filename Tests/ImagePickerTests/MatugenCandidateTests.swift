@@ -30,6 +30,40 @@ final class MatugenCandidateTests: XCTestCase {
         XCTAssertFalse(tertiary.contains(where: \.nearExtreme))
     }
 
+    func testRemotePreferencesDropAvoidableDuplicateAssignments() throws {
+        let background = try ThemeColor(hex: "#101010")
+        let foreground = try ThemeColor(hex: "#f0f0f0")
+        let red = MatugenColorCandidate(
+            id: "red", hex: "#cc3344", family: "error", tone: 60,
+            contrast: 5.7, chroma: 0.6, nearExtreme: false
+        )
+        let blue = MatugenColorCandidate(
+            id: "blue", hex: "#4488cc", family: "primary", tone: 60,
+            contrast: 5.1, chroma: 0.53, nearExtreme: false
+        )
+        let green = MatugenColorCandidate(
+            id: "green", hex: "#44aa66", family: "secondary", tone: 60,
+            contrast: 6.0, chroma: 0.45, nearExtreme: false
+        )
+        let candidates = MatugenThemeCandidateSet(
+            mode: .dark,
+            schemeType: .schemeTonalSpot,
+            background: background,
+            foreground: foreground,
+            choices: ["color1": [red, blue], "color2": [blue, green]],
+            cursorChoices: [blue],
+            localColors: ["color1": red.hex, "color2": green.hex],
+            localCursor: blue.hex
+        )
+
+        let accepted = candidates.acceptedPreferences([
+            "color1": blue.hex,
+            "color2": blue.hex,
+        ])
+        XCTAssertEqual(accepted["color1"], blue.hex)
+        XCTAssertNil(accepted["color2"])
+    }
+
     private static let fixtureWithExtremeTertiary: Data = {
         let colors: [String: Any] = [
             "surface": ["dark": ["color": "#101010"], "light": ["color": "#fefefe"]],

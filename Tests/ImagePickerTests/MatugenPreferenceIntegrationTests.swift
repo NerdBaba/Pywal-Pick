@@ -73,6 +73,38 @@ final class MatugenPreferenceIntegrationTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: context.root.appendingPathComponent("wal/colors").path))
     }
 
+    func testInvalidRankerChoiceIsIgnoredAndNotStored() async throws {
+        let context = try Self.makeContext()
+        defer { try? FileManager.default.removeItem(at: context.root) }
+
+        let ranker = RecordingPreferenceRanker { _ in
+            ["color2": "#ffffff", "color3": "#ffffff"]
+        }
+        let service = MatugenThemeService(
+            processRunner: context.runner,
+            cacheRoot: context.root.appendingPathComponent("cache"),
+            pywalCacheDirectory: context.root.appendingPathComponent("wal"),
+            configDirectory: context.root.appendingPathComponent("config"),
+            preferenceRanker: ranker,
+            apiKeyStore: FixedTypeSafeAPIKeyStore(value: "integration-secret")
+        )
+        var config = AppConfig.default
+        config.matugenBinaryPath = "/bin/sh"
+        config.walBinaryPath = "/bin/sh"
+        config.matugenTypeSafeEnabled = true
+
+        _ = try await service.generate(
+            sourceURL: context.sourceURL,
+            inputURL: context.sourceURL,
+            config: config
+        )
+
+        let preferences = try String(
+            contentsOf: context.root.appendingPathComponent("wal/pywalpick-matugen-preferences.json")
+        )
+        XCTAssertFalse(preferences.contains("#ffffff"))
+    }
+
     func testChangingAPIKeyFingerprintInvalidatesPublishedPreferenceCache() async throws {
         let context = try Self.makeContext()
         defer { try? FileManager.default.removeItem(at: context.root) }

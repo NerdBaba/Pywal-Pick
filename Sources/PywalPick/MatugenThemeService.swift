@@ -544,7 +544,8 @@ public actor MatugenThemeService {
                 mode: config.matugenMode,
                 schemeType: config.matugenSchemeType
             )
-            return try await preferenceRanker.rank(candidates: candidates, apiKey: apiKey)
+            let ranked = try await preferenceRanker.rank(candidates: candidates, apiKey: apiKey)
+            return candidates.acceptedPreferences(ranked)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
