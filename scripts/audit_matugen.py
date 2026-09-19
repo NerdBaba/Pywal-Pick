@@ -196,11 +196,13 @@ if args[1] == "convert" {
                     metrics = {'foreground': contrast(special['foreground'], bg),
                                'cursor': contrast(special['cursor'], bg)}
                     metrics.update({k: contrast(v, bg) for k, v in colors.items()})
+                    ansi_slots = [f'color{i}' for i in [1, 2, 3, 4, 5, 6, 8,
+                                                          9, 10, 11, 12, 13, 14]]
                     metrics['near_extreme_ansi_slots'] = sum(
-                        near_extreme(value) for value in colors.values()
+                        near_extreme(colors[slot]) for slot in ansi_slots
                     )
                     metrics['duplicate_ansi_slot_groups'] = sum(
-                        count > 1 for count in collections.Counter(colors.values()).values()
+                        count > 1 for count in collections.Counter(colors[slot] for slot in ansi_slots).values()
                     )
                     tilix = json.loads((case / 'colors-tilix.json').read_text())
                     metrics['tilix_selection'] = contrast(tilix['highlight-foreground-color'],
