@@ -176,6 +176,7 @@ public struct AppConfig: Codable, Sendable {
     public var matugenMode: MatugenMode
     public var matugenSchemeType: MatugenSchemeType
     public var matugenContrast: Double
+    public var matugenTypeSafeEnabled: Bool
 
     public static let `default` = AppConfig(
         wallpaperFolderPath: "",
@@ -238,7 +239,8 @@ public struct AppConfig: Codable, Sendable {
         matugenBinaryPath: String = NSHomeDirectory() + "/.cargo/bin/matugen",
         matugenMode: MatugenMode = .dark,
         matugenSchemeType: MatugenSchemeType = .schemeTonalSpot,
-        matugenContrast: Double = 0
+        matugenContrast: Double = 0,
+        matugenTypeSafeEnabled: Bool = false
     ) {
         self.wallpaperFolderPath = wallpaperFolderPath
         self.dummyWallpaperFile = dummyWallpaperFile
@@ -268,6 +270,7 @@ public struct AppConfig: Codable, Sendable {
         self.matugenMode = matugenMode
         self.matugenSchemeType = matugenSchemeType
         self.matugenContrast = min(max(matugenContrast, -1), 1)
+        self.matugenTypeSafeEnabled = matugenTypeSafeEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -301,6 +304,7 @@ public struct AppConfig: Codable, Sendable {
         matugenMode = try c.decodeIfPresent(MatugenMode.self, forKey: .matugenMode) ?? d.matugenMode
         matugenSchemeType = try c.decodeIfPresent(MatugenSchemeType.self, forKey: .matugenSchemeType) ?? d.matugenSchemeType
         matugenContrast = min(max(try c.decodeIfPresent(Double.self, forKey: .matugenContrast) ?? d.matugenContrast, -1), 1)
+        matugenTypeSafeEnabled = try c.decodeIfPresent(Bool.self, forKey: .matugenTypeSafeEnabled) ?? d.matugenTypeSafeEnabled
     }
 
     public static func load() -> AppConfig {

@@ -16,6 +16,8 @@ public struct SettingsView: View {
     @State private var pendingWalBinary = ""
     @State private var pendingMatugenBinary = ""
     @State private var pendingCustomScript = ""
+    @State private var typeSafeAPIKey = ""
+    @State private var typeSafeKeyStatus: PathStatus?
     @State private var pathStatuses: [PickerType: PathStatus] = [:]
 
     // CLI state
@@ -376,6 +378,39 @@ public struct SettingsView: View {
                         .font(UIStyle.caption)
                         .foregroundStyle(.secondary)
 
+                    Toggle("Use TypeSafe color preference", isOn: $settingsManager.config.matugenTypeSafeEnabled)
+                        .toggleStyle(.switch)
+
+                    HStack {
+                        SecureField("TypeSafe API key", text: $typeSafeAPIKey)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("Save Key") {
+                            saveTypeSafeAPIKey()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+
+                        Button("Clear") {
+                            clearTypeSafeAPIKey()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    if let typeSafeKeyStatus {
+                        Label(
+                            typeSafeKeyStatus.message,
+                            systemImage: typeSafeKeyStatus.isError ? "exclamationmark.circle" : "checkmark.circle"
+                        )
+                        .font(UIStyle.caption)
+                        .foregroundStyle(typeSafeKeyStatus.isError ? .red : .secondary)
+                    }
+
+                    Text("Optional. TypeSafe ranks only Matugen-derived color candidates; the local selector remains the fallback. Only palette metadata is sent.")
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
+
                     Button {
                         openWindow(id: "matugen-colors")
                     } label: {
@@ -725,6 +760,7 @@ public struct SettingsView: View {
         pendingWalBinary = settingsManager.config.walBinaryPath
         pendingMatugenBinary = settingsManager.config.matugenBinaryPath
         pendingCustomScript = settingsManager.config.customScriptPath
+        typeSafeAPIKey = (try? TypeSafeAPIKeyStore.shared.load()) ?? ""
     }
 
     private func applyPickedPathToPending(_ path: String, for type: PickerType) {
@@ -842,6 +878,25 @@ public struct SettingsView: View {
         pendingCustomScript = path
         settingsManager.config.customScriptPath = path
         setStatus(.script, message: "Applied", isError: false)
+    }
+
+    private func saveTypeSafeAPIKey() {
+        do {
+            try TypeSafeAPIKeyStore.shared.save(typeSafeAPIKey)
+            typeSafeKeyStatus = PathStatus(message: "Saved securely in Keychain", isError: false)
+        } catch {
+            typeSafeKeyStatus = PathStatus(message: error.localizedDescription, isError: true)
+        }
+    }
+
+    private func clearTypeSafeAPIKey() {
+        do {
+            try TypeSafeAPIKeyStore.shared.remove()
+            typeSafeAPIKey = ""
+            typeSafeKeyStatus = PathStatus(message: "Cleared", isError: false)
+        } catch {
+            typeSafeKeyStatus = PathStatus(message: error.localizedDescription, isError: true)
+        }
     }
 
     // MARK: - Path validation / Finder / wal detect
