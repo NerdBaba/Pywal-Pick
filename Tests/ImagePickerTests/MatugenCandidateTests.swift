@@ -20,6 +20,16 @@ final class MatugenCandidateTests: XCTestCase {
         XCTAssertLessThan(tertiary.relativeLuminance, 0.25)
     }
 
+    func testCandidateChoicesExcludeExtremeColorsWhenSafeTonesExist() throws {
+        let candidates = try MatugenThemeConverter.makeColorCandidates(
+            from: Self.fixtureWithExtremeTertiary,
+            mode: .light,
+            schemeType: .schemeTonalSpot
+        )
+        let tertiary = try XCTUnwrap(candidates.choices["color2"])
+        XCTAssertFalse(tertiary.contains(where: \.nearExtreme))
+    }
+
     private static let fixtureWithExtremeTertiary: Data = {
         let colors: [String: Any] = [
             "surface": ["dark": ["color": "#101010"], "light": ["color": "#fefefe"]],

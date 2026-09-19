@@ -201,7 +201,7 @@ enum MatugenColorCandidateBuilder {
                 deduplicated[candidate.hex] = candidate
             }
         }
-        return deduplicated.values.sorted { left, right in
+        let sorted = deduplicated.values.sorted { left, right in
             let leftDistance = abs((left.tone ?? targetTone) - targetTone)
             let rightDistance = abs((right.tone ?? targetTone) - targetTone)
             if leftDistance != rightDistance { return leftDistance < rightDistance }
@@ -209,6 +209,12 @@ enum MatugenColorCandidateBuilder {
             if left.contrast != right.contrast { return left.contrast < right.contrast }
             return left.id < right.id
         }
+        // Keep extreme black/white candidates available only when the palette
+        // offers no safer readable alternative. This protects both the local
+        // selector and an optional remote ranker from choosing a technically
+        // contrasting but visually harsh ANSI color.
+        let safe = sorted.filter { !$0.nearExtreme }
+        return safe.isEmpty ? sorted : safe
     }
 
     private static func makeCandidate(
