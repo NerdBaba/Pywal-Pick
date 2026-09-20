@@ -451,7 +451,7 @@ public struct SettingsView: View {
                 )
 
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Matugen Palette", systemImage: "wand.and.stars")
+                    Label("Matugen palette", systemImage: "wand.and.stars")
                         .font(UIStyle.sectionTitle)
 
                     Picker("Mode", selection: $settingsManager.config.matugenMode) {
@@ -478,6 +478,12 @@ public struct SettingsView: View {
                     Text("Matugen is available as a backend in the main picker and backend cycle. These options apply the next time it is selected.")
                         .font(UIStyle.caption)
                         .foregroundStyle(.secondary)
+                }
+                .uiSettingsSection()
+
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("TypeSafe preference", systemImage: "checkmark.seal")
+                        .font(UIStyle.sectionTitle)
 
                     Toggle("Use TypeSafe color preference", isOn: $settingsManager.config.matugenTypeSafeEnabled)
                         .toggleStyle(.switch)
@@ -551,11 +557,19 @@ public struct SettingsView: View {
                             .font(UIStyle.caption)
                             .foregroundStyle(.secondary)
                     }
+                }
+                .uiSettingsSection()
+
+                HStack {
+                    Label("Palette explorer", systemImage: "square.grid.3x3.fill")
+                        .font(UIStyle.sectionTitle)
+
+                    Spacer()
 
                     Button {
                         openWindow(id: "matugen-colors")
                     } label: {
-                        Label("Explore All Colors", systemImage: "square.grid.3x3.fill")
+                        Label("Explore All Colors", systemImage: "arrow.up.right.square")
                     }
                     .buttonStyle(.borderedProminent)
                     .help("Inspect every generated Material, Base16, and tonal palette color")
