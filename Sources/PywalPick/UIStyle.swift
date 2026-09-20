@@ -17,7 +17,7 @@ enum UIStyle {
     static let spaceMD: CGFloat = 12
     static let spaceLG: CGFloat = 16
     static let spaceXL: CGFloat = 20
-    static let spaceXXL: CGFloat = 24
+    static let spaceXXL: CGFloat = 28
 
     // MARK: - Strokes / selection
 
@@ -73,16 +73,19 @@ extension View {
             )
     }
 
-    /// Settings section card.
+    /// Shared settings row surface used inside a grouped detail page.
     func uiSettingsSection() -> some View {
         self
-            .padding(UIStyle.spaceLG)
+            .padding(.horizontal, UIStyle.spaceLG)
+            .padding(.vertical, UIStyle.spaceMD)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial.opacity(0.45), in: RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous)
-                    .strokeBorder(.primary.opacity(0.06), lineWidth: UIStyle.hairline)
-            )
+            .background(.clear)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(.primary.opacity(0.08))
+                    .frame(height: UIStyle.hairline)
+                    .padding(.horizontal, UIStyle.spaceLG)
+            }
     }
 
     func uiElevatedShadow(_ style: UIStyle.ShadowStyle = UIStyle.elevatedShadow) -> some View {

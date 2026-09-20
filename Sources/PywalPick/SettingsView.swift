@@ -101,14 +101,15 @@ public struct SettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: UIStyle.spaceSM) {
                 Image(systemName: selectedTab.icon)
-                    .font(.title2.weight(.semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
+                    .foregroundStyle(.tint)
+                    .frame(width: 34, height: 34)
+                    .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: UIStyle.radiusSM, style: .continuous))
 
                 VStack(alignment: .leading, spacing: UIStyle.spaceXS) {
                     Text(selectedTab.title)
-                        .font(.title2.weight(.semibold))
+                        .font(.title2.weight(.bold))
 
                     Text(selectedTab.subtitle)
                         .font(.subheadline)
@@ -119,7 +120,7 @@ public struct SettingsView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, UIStyle.spaceXL)
-            .padding(.vertical, UIStyle.spaceLG)
+            .padding(.vertical, UIStyle.spaceXL)
 
             Divider().opacity(0.45)
 
@@ -145,8 +146,8 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: UIStyle.spaceXXL) {
                 content()
             }
-            .frame(maxWidth: 760, alignment: .leading)
-            .padding(.vertical, UIStyle.spaceLG)
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.vertical, UIStyle.spaceXL)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -158,18 +159,37 @@ public struct SettingsView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-            VStack(alignment: .leading, spacing: UIStyle.spaceXS) {
-                Text(title)
-                    .font(.title3.weight(.semibold))
+            HStack(alignment: .top, spacing: UIStyle.spaceSM) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(.tint.opacity(0.75))
+                    .frame(width: 3, height: 30)
+                    .padding(.top, 2)
 
-                if let description {
-                    Text(description)
-                        .font(UIStyle.caption)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: UIStyle.spaceXS) {
+                    Text(title)
+                        .font(.headline.weight(.semibold))
+
+                    if let description {
+                        Text(description)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
 
-            content()
+            VStack(alignment: .leading, spacing: 0) {
+                content()
+            }
+            .background(
+                .regularMaterial.opacity(0.34),
+                in: RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous)
+                    .strokeBorder(.primary.opacity(0.08), lineWidth: UIStyle.hairline)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: UIStyle.radiusMD, style: .continuous))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
