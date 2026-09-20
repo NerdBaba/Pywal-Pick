@@ -143,7 +143,7 @@ public struct SettingsView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: UIStyle.spaceXXL) {
+            VStack(alignment: .leading, spacing: UIStyle.settingsGroupSpacing) {
                 content()
             }
             .frame(maxWidth: 820, alignment: .leading)

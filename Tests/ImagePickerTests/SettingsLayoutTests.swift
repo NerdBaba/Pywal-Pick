@@ -3,6 +3,6 @@ import XCTest
 
 final class SettingsLayoutTests: XCTestCase {
     func testSettingsPagesUseTheSharedExpandedGroupRhythm() {
-        XCTAssertEqual(UIStyle.spaceXXL, 28)
+        XCTAssertEqual(UIStyle.settingsGroupSpacing, 28)
     }
 }

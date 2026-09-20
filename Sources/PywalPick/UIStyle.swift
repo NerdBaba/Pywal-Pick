@@ -17,7 +17,8 @@ enum UIStyle {
     static let spaceMD: CGFloat = 12
     static let spaceLG: CGFloat = 16
     static let spaceXL: CGFloat = 20
-    static let spaceXXL: CGFloat = 28
+    static let spaceXXL: CGFloat = 24
+    static let settingsGroupSpacing: CGFloat = 28
 
     // MARK: - Strokes / selection
 
