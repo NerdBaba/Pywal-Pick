@@ -416,13 +416,33 @@ public struct SettingsView: View {
                     Label("Color backend", systemImage: "paintbrush.pointed")
                         .font(UIStyle.sectionTitle)
 
-                    Picker("Color extraction backend", selection: $settingsManager.config.selectedBackend) {
-                        ForEach(WalBackend.allCases) { backend in
-                            Text(backend.displayName).tag(backend)
+                    HStack(spacing: UIStyle.spaceMD) {
+                        Text("Selected backend")
+                            .font(UIStyle.controlLabel)
+                            .foregroundStyle(.secondary)
+
+                        Spacer(minLength: UIStyle.spaceSM)
+
+                        Picker("Selected backend", selection: $settingsManager.config.selectedBackend) {
+                            ForEach(WalBackend.allCases) { backend in
+                                Text(backend.displayName).tag(backend)
+                            }
                         }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .controlSize(.large)
+                        .frame(minWidth: 220, alignment: .leading)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    .padding(.horizontal, UIStyle.spaceMD)
+                    .padding(.vertical, UIStyle.spaceSM)
+                    .background(
+                        .quaternary.opacity(0.5),
+                        in: RoundedRectangle(cornerRadius: UIStyle.radiusSM, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: UIStyle.radiusSM, style: .continuous)
+                            .strokeBorder(.primary.opacity(0.08), lineWidth: UIStyle.hairline)
+                    )
 
                     Text("Determines how wal extracts colors from wallpapers")
                         .font(UIStyle.caption)
