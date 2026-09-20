@@ -176,3 +176,18 @@ public enum WallpaperThemeChoiceKeyAction: Equatable, Sendable {
         }
     }
 }
+
+/// Identifies which wallpaper browser should receive keyboard focus.
+public enum WallpaperBrowserFocusTarget: Equatable, Sendable {
+    case grid
+    case carousel
+
+    public init(viewMode: ViewMode) {
+        switch viewMode {
+        case .grid:
+            self = .grid
+        case .carousel:
+            self = .carousel
+        }
+    }
+}

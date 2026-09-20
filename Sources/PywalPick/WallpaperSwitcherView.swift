@@ -1278,8 +1278,20 @@ public struct WallpaperSwitcherView: View {
         lastSelectedWallpaperURL = wallpaper.url
         viewModel.setCurrentWallpaper(wallpaper)
         themePopoverWallpaper = nil
+        restoreBrowserFocusAfterThemeChoice()
         setWallpaper(wallpaper, backend: choice.backend)
         showThemeChoiceToast(choice)
+    }
+
+    private func restoreBrowserFocusAfterThemeChoice() {
+        // Let the popover finish dismissing before claiming focus for the
+        // underlying browser again. The popover's native key responder would
+        // otherwise remain the active responder for the next key press.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            let target = WallpaperBrowserFocusTarget(viewMode: viewModel.viewMode)
+            isGridFocused = target == .grid
+            isCarouselFocused = target == .carousel
+        }
     }
 
     private func showThemeChoiceToast(_ choice: WallpaperThemeChoice) {

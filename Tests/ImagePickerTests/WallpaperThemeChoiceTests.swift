@@ -76,6 +76,11 @@ final class WallpaperThemeChoiceTests: XCTestCase {
         XCTAssertNil(WallpaperThemeChoiceKeyAction(keyCode: 0))
     }
 
+    func testBrowserFocusTargetTracksTheActiveViewMode() {
+        XCTAssertEqual(WallpaperBrowserFocusTarget(viewMode: .grid), .grid)
+        XCTAssertEqual(WallpaperBrowserFocusTarget(viewMode: .carousel), .carousel)
+    }
+
     func testEachChoiceUsesANameAppropriateFontStyle() {
         XCTAssertEqual(
             WallpaperThemeChoice.backend(.fastColorthief).fontStyle,
