@@ -203,7 +203,7 @@ public struct SettingsView: View {
                 description: "Choose the folder to browse and the image file wal uses during color extraction."
             ) {
                 pathSection(
-                    title: "Wallpaper Folder",
+                    title: "Wallpaper folder",
                     icon: "folder.fill",
                     path: $pendingWallpaperPath,
                     pickerType: .folder,
@@ -211,7 +211,7 @@ public struct SettingsView: View {
                 )
 
                 pathSection(
-                    title: "Dummy File",
+                    title: "Dummy file",
                     icon: "doc.fill",
                     path: $pendingDummyFile,
                     pickerType: .dummyFile,
@@ -224,7 +224,7 @@ public struct SettingsView: View {
                 description: "Point Pywal Pick at the wal executable used to generate colors."
             ) {
                 pathSection(
-                    title: "Wal Binary",
+                    title: "Wal binary",
                     icon: "terminal.fill",
                     path: $pendingWalBinary,
                     pickerType: .walBinary,
@@ -242,7 +242,7 @@ public struct SettingsView: View {
                 description: "Set the browser layout and choose how much information appears on each wallpaper."
             ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Grid Layout", systemImage: "square.grid.3x3")
+                    Label("Grid layout", systemImage: "square.grid.3x3")
                         .font(UIStyle.sectionTitle)
 
                     LabeledContent("Columns") {
@@ -259,7 +259,7 @@ public struct SettingsView: View {
                 .uiSettingsSection()
 
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("View Mode", systemImage: "rectangle.split.3x1")
+                    Label("View mode", systemImage: "rectangle.split.3x1")
                         .font(UIStyle.sectionTitle)
 
                     Picker("Default view", selection: $settingsManager.config.viewMode) {
@@ -278,7 +278,7 @@ public struct SettingsView: View {
                 description: "Choose the order used when the wallpaper browser opens."
             ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Default Sorting", systemImage: "arrow.up.arrow.down")
+                    Label("Default sorting", systemImage: "arrow.up.arrow.down")
                         .font(UIStyle.sectionTitle)
 
                     HStack(spacing: UIStyle.spaceMD) {
@@ -310,7 +310,7 @@ public struct SettingsView: View {
                 description: "Control the animation played above the desktop when a wallpaper is applied."
             ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Wallpaper Transition", systemImage: "rectangle.on.rectangle.angled")
+                    Label("Wallpaper transition", systemImage: "rectangle.on.rectangle.angled")
                         .font(UIStyle.sectionTitle)
 
                     Picker("Transition", selection: $settingsManager.config.transitionType) {
@@ -371,7 +371,7 @@ public struct SettingsView: View {
                             if isRebuildingCache {
                                 Label("Rebuilding…", systemImage: "arrow.triangle.2.circlepath")
                             } else {
-                                Label("Rebuild Wallpaper Cache", systemImage: "arrow.triangle.2.circlepath")
+                                Label("Rebuild wallpaper cache", systemImage: "arrow.triangle.2.circlepath")
                             }
                         }
                         .buttonStyle(.borderedProminent)
@@ -413,7 +413,7 @@ public struct SettingsView: View {
                 description: "Choose how wallpaper colors are extracted and prepared for the rest of the app."
             ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Wal Backend", systemImage: "paintbrush.pointed")
+                    Label("Color backend", systemImage: "paintbrush.pointed")
                         .font(UIStyle.sectionTitle)
 
                     Picker("Color extraction backend", selection: $settingsManager.config.selectedBackend) {
@@ -442,7 +442,7 @@ public struct SettingsView: View {
                 description: "Configure the optional Material You pipeline and its preference service."
             ) {
                 pathSection(
-                    title: "Matugen Binary",
+                    title: "Matugen binary",
                     icon: "paintpalette",
                     path: $pendingMatugenBinary,
                     pickerType: .matugenBinary,
@@ -569,7 +569,7 @@ public struct SettingsView: View {
                     Button {
                         openWindow(id: "matugen-colors")
                     } label: {
-                        Label("Explore All Colors", systemImage: "arrow.up.right.square")
+                        Label("Explore all colors", systemImage: "arrow.up.right.square")
                     }
                     .buttonStyle(.borderedProminent)
                     .help("Inspect every generated Material, Base16, and tonal palette color")
@@ -582,7 +582,7 @@ public struct SettingsView: View {
                 description: "Keep browser themes and optional post-processing scripts in sync with wallpaper changes."
             ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Browser Integration", systemImage: "safari")
+                    Label("Browser integration", systemImage: "safari")
                         .font(UIStyle.sectionTitle)
 
                     Toggle("Run pywalfox update after wal", isOn: $settingsManager.config.runPywalfox)
@@ -595,7 +595,7 @@ public struct SettingsView: View {
                 .uiSettingsSection()
 
                 pathSection(
-                    title: "Custom Script",
+                    title: "Custom script",
                     icon: "applescript",
                     path: $pendingCustomScript,
                     pickerType: .script,
@@ -608,7 +608,7 @@ public struct SettingsView: View {
                 description: "Set the optional API connection and the defaults used by the Wallhaven browser."
             ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Wallhaven API Key", systemImage: "key")
+                    Label("API key", systemImage: "key")
                         .font(UIStyle.sectionTitle)
 
                     HStack {
@@ -629,7 +629,7 @@ public struct SettingsView: View {
                 .uiSettingsSection()
 
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Wallhaven Default Filters", systemImage: "line.3.horizontal.decrease.circle")
+                    Label("Default filters", systemImage: "line.3.horizontal.decrease.circle")
                         .font(UIStyle.sectionTitle)
 
                     Text("Applied every time you open the Wallhaven browser.")
@@ -749,7 +749,7 @@ public struct SettingsView: View {
                 description: "Install wallpick once, then control wallpapers from any terminal session."
             ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("wallpick CLI Tool", systemImage: "terminal")
+                    Label("wallpick CLI tool", systemImage: "terminal")
                         .font(UIStyle.sectionTitle)
 
                     Text("Install the command-line tool to control wallpapers from your terminal.")
