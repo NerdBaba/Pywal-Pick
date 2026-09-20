@@ -227,6 +227,7 @@ public struct WallpaperSwitcherView: View {
     @State private var showWallhaven = false
     @State private var currentWallpaper: String?
     @State private var lastSelectedWallpaperURL: URL?
+    @State private var themePopoverWallpaper: ImageFile?
     @State private var toastMessage: String?
     @State private var showToast = false
     @FocusState private var isSearchFocused: Bool
@@ -540,14 +541,17 @@ public struct WallpaperSwitcherView: View {
                             }
                         }
                         .onKeyPress(.leftArrow) {
+                            guard themePopoverWallpaper == nil else { return .handled }
                             handleLeftArrow()
                             return .handled
                         }
                         .onKeyPress(.rightArrow) {
+                            guard themePopoverWallpaper == nil else { return .handled }
                             handleRightArrow()
                             return .handled
                         }
                         .onKeyPress(.upArrow) {
+                            guard themePopoverWallpaper == nil else { return .handled }
                             if viewModel.viewMode != .carousel {
                                 viewModel.moveSelection(
                                     direction: .up, columns: settingsManager.config.gridColumns)
@@ -555,6 +559,7 @@ public struct WallpaperSwitcherView: View {
                             return .handled
                         }
                         .onKeyPress(.downArrow) {
+                            guard themePopoverWallpaper == nil else { return .handled }
                             if viewModel.viewMode != .carousel {
                                 viewModel.moveSelection(
                                     direction: .down, columns: settingsManager.config.gridColumns)
@@ -562,18 +567,12 @@ public struct WallpaperSwitcherView: View {
                             return .handled
                         }
                         .onKeyPress(.return) {
+                            guard themePopoverWallpaper == nil else { return .handled }
                             if let index = viewModel.highlightedIndex,
                                 index < viewModel.filteredWallpapers.count
                             {
                                 let wallpaper = viewModel.filteredWallpapers[index]
-                                let isReselect = lastSelectedWallpaperURL == wallpaper.url
-                                if isReselect {
-                                    cycleBackendAndSet(wallpaper)
-                                } else {
-                                    lastSelectedWallpaperURL = wallpaper.url
-                                    viewModel.setCurrentWallpaper(wallpaper)
-                                    setWallpaper(wallpaper)
-                                }
+                                selectWallpaper(wallpaper)
                             }
                             return .handled
                         }
@@ -750,15 +749,13 @@ public struct WallpaperSwitcherView: View {
                                 imageHeight: imageHeight,
                                 showName: settingsManager.config.showWallpaperNames,
                                 placeholderColor: viewModel.placeholderColor(for: wallpaper.url),
+                                themePopoverPresented: themeChoicePopoverBinding(for: wallpaper),
+                                selectedThemeChoice: activeThemeChoice,
+                                onThemeChoice: { choice in
+                                    applyThemeChoice(choice, to: wallpaper)
+                                },
                                 onSelect: {
-                                    let isReselect = lastSelectedWallpaperURL == wallpaper.url
-                                    if isReselect {
-                                        cycleBackendAndSet(wallpaper)
-                                    } else {
-                                        lastSelectedWallpaperURL = wallpaper.url
-                                        viewModel.setCurrentWallpaper(wallpaper)
-                                        setWallpaper(wallpaper)
-                                    }
+                                    selectWallpaper(wallpaper)
                                     viewModel.highlightedIndex = index
                                     isGridFocused = true
                                 }
@@ -794,16 +791,14 @@ public struct WallpaperSwitcherView: View {
                                 isCentered: viewModel.highlightedIndex == index,
                                 cardWidth: min(max(geometry.size.width * 0.55, 480), 960),
                                 showName: settingsManager.config.showWallpaperNames,
+                                themePopoverPresented: themeChoicePopoverBinding(for: wallpaper),
+                                selectedThemeChoice: activeThemeChoice,
+                                onThemeChoice: { choice in
+                                    applyThemeChoice(choice, to: wallpaper)
+                                },
                                 onSelect: {
-                                    let isReselect = lastSelectedWallpaperURL == wallpaper.url
-                                    if isReselect {
-                                        cycleBackendAndSet(wallpaper)
-                                    } else {
-                                        lastSelectedWallpaperURL = wallpaper.url
-                                        viewModel.highlightedIndex = index
-                                        viewModel.setCurrentWallpaper(wallpaper)
-                                        setWallpaper(wallpaper)
-                                    }
+                                    selectWallpaper(wallpaper)
+                                    viewModel.highlightedIndex = index
                                     isCarouselFocused = true
                                 },
                                 onDeleteRequest: {
@@ -848,6 +843,7 @@ public struct WallpaperSwitcherView: View {
     }
 
     private func handleLeftArrow() {
+        guard themePopoverWallpaper == nil else { return }
         if viewModel.viewMode == .carousel {
             if let currentIndex = viewModel.highlightedIndex {
                 let newIndex = max(0, currentIndex - 1)
@@ -863,6 +859,7 @@ public struct WallpaperSwitcherView: View {
     }
 
     private func handleRightArrow() {
+        guard themePopoverWallpaper == nil else { return }
         if viewModel.viewMode == .carousel {
             if let currentIndex = viewModel.highlightedIndex {
                 let newIndex = min(viewModel.filteredWallpapers.count - 1, currentIndex + 1)
@@ -1240,21 +1237,57 @@ public struct WallpaperSwitcherView: View {
         }
     }
 
-    private func cycleBackendAndSet(_ wallpaper: ImageFile) {
-        let allBackends = WalBackend.allCases
-        guard let currentIndex = allBackends.firstIndex(where: { $0.rawValue == settingsManager.config.selectedBackend.rawValue }) else { return }
-        let nextIndex = (currentIndex + 1) % allBackends.count
-        let nextBackend = allBackends[nextIndex]
-        settingsManager.config.selectedBackend = nextBackend
-        lastSelectedWallpaperURL = wallpaper.url
-        viewModel.setCurrentWallpaper(wallpaper)
-        setWallpaper(wallpaper, backend: nextBackend)
-        showBackendToast(nextBackend)
+    private var activeThemeChoice: WallpaperThemeChoice {
+        if settingsManager.config.selectedBackend == .matugen {
+            return .matugen(settingsManager.config.matugenSchemeType)
+        }
+        return .backend(settingsManager.config.selectedBackend)
     }
 
-    private func showBackendToast(_ backend: WalBackend) {
+    private func selectWallpaper(_ wallpaper: ImageFile) {
+        if lastSelectedWallpaperURL == wallpaper.url {
+            openThemeChoicePopover(for: wallpaper)
+            return
+        }
+
+        themePopoverWallpaper = nil
+        lastSelectedWallpaperURL = wallpaper.url
+        viewModel.setCurrentWallpaper(wallpaper)
+        setWallpaper(wallpaper)
+    }
+
+    private func openThemeChoicePopover(for wallpaper: ImageFile) {
+        lastSelectedWallpaperURL = wallpaper.url
+        viewModel.setCurrentWallpaper(wallpaper)
+        themePopoverWallpaper = wallpaper
+    }
+
+    private func themeChoicePopoverBinding(for wallpaper: ImageFile) -> Binding<Bool> {
+        Binding(
+            get: { themePopoverWallpaper?.url == wallpaper.url },
+            set: { isPresented in
+                if !isPresented, themePopoverWallpaper?.url == wallpaper.url {
+                    themePopoverWallpaper = nil
+                }
+            }
+        )
+    }
+
+    private func applyThemeChoice(_ choice: WallpaperThemeChoice, to wallpaper: ImageFile) {
+        choice.apply(to: &settingsManager.config)
+        lastSelectedWallpaperURL = wallpaper.url
+        viewModel.setCurrentWallpaper(wallpaper)
+        themePopoverWallpaper = nil
+        setWallpaper(wallpaper, backend: choice.backend)
+        showThemeChoiceToast(choice)
+    }
+
+    private func showThemeChoiceToast(_ choice: WallpaperThemeChoice) {
+        let label = choice.section == .matugen
+            ? "Matugen: " + choice.displayName
+            : "Backend: " + choice.displayName
         withAnimation(.easeInOut(duration: 0.2)) {
-            toastMessage = "Backend: \(backend.displayName)"
+            toastMessage = label
             showToast = true
         }
         Task {
@@ -1850,6 +1883,9 @@ struct WallpaperCardView: View {
     let imageHeight: CGFloat
     let showName: Bool
     let placeholderColor: Color?
+    let themePopoverPresented: Binding<Bool>
+    let selectedThemeChoice: WallpaperThemeChoice
+    let onThemeChoice: (WallpaperThemeChoice) -> Void
     let onSelect: () -> Void
 
     @State private var thumbnailImage: Image?
@@ -1899,6 +1935,16 @@ struct WallpaperCardView: View {
         .frame(width: cardWidth)
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
+        .popover(
+            isPresented: themePopoverPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            WallpaperThemeChoicePopover(
+                selectedChoice: selectedThemeChoice,
+                onSelect: onThemeChoice
+            )
+        }
         .task(id: wallpaper.url) {
             // Prefer disk/memory ThumbnailCache (prewarmed on load); fall back to ImageIO.
             let thumbSize: ThumbnailSize =
@@ -1927,6 +1973,9 @@ struct CarouselCardView: View {
     let isCentered: Bool
     let cardWidth: CGFloat
     let showName: Bool
+    let themePopoverPresented: Binding<Bool>
+    let selectedThemeChoice: WallpaperThemeChoice
+    let onThemeChoice: (WallpaperThemeChoice) -> Void
     let onSelect: () -> Void
     let onDeleteRequest: () -> Void
 
@@ -2000,6 +2049,16 @@ struct CarouselCardView: View {
         )
         .animation(.easeInOut(duration: 0.28), value: isCentered)
         .onTapGesture { onSelect() }
+        .popover(
+            isPresented: themePopoverPresented,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+        ) {
+            WallpaperThemeChoicePopover(
+                selectedChoice: selectedThemeChoice,
+                onSelect: onThemeChoice
+            )
+        }
         .task {
             if let nsImage = await OptimizedImageCache.shared.loadThumbnail(
                 for: wallpaper.url,
@@ -2011,7 +2070,7 @@ struct CarouselCardView: View {
     }
 }
 
-/// Simple toast notification showing the active backend name.
+/// Simple toast notification showing the active theme choice.
 struct BackendToastView: View {
     let message: String
 

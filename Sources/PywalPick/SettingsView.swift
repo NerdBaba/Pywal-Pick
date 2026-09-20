@@ -99,15 +99,24 @@ public struct SettingsView: View {
     @ViewBuilder
     private var detailContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Detail header — docs-style title bar
-            HStack(spacing: UIStyle.spaceSM) {
+            HStack(alignment: .top, spacing: UIStyle.spaceSM) {
                 Image(systemName: selectedTab.icon)
                     .font(.title2.weight(.semibold))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.secondary)
-                Text(selectedTab.title)
-                    .font(.title2.weight(.semibold))
-                Spacer()
+                    .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: UIStyle.spaceXS) {
+                    Text(selectedTab.title)
+                        .font(.title2.weight(.semibold))
+
+                    Text(selectedTab.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, UIStyle.spaceXL)
             .padding(.vertical, UIStyle.spaceLG)
@@ -122,16 +131,57 @@ public struct SettingsView: View {
                 case .cli: cliTab
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, UIStyle.spaceXL)
             .padding(.bottom, UIStyle.spaceMD)
         }
     }
 
+    @ViewBuilder
+    private func settingsPage<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: UIStyle.spaceXXL) {
+                content()
+            }
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.vertical, UIStyle.spaceLG)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func settingsGroup<Content: View>(
+        title: String,
+        description: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+            VStack(alignment: .leading, spacing: UIStyle.spaceXS) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+
+                if let description {
+                    Text(description)
+                        .font(UIStyle.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // MARK: - Tabs
 
     private var pathsTab: some View {
-        ScrollView {
-            VStack(spacing: UIStyle.spaceLG) {
+        settingsPage {
+            settingsGroup(
+                title: "Wallpaper setup",
+                description: "Choose the folder to browse and the image file wal uses during color extraction."
+            ) {
                 pathSection(
                     title: "Wallpaper Folder",
                     icon: "folder.fill",
@@ -147,7 +197,12 @@ public struct SettingsView: View {
                     pickerType: .dummyFile,
                     apply: applyDummyFile
                 )
+            }
 
+            settingsGroup(
+                title: "Color pipeline",
+                description: "Point Pywal Pick at the wal executable used to generate colors."
+            ) {
                 pathSection(
                     title: "Wal Binary",
                     icon: "terminal.fill",
@@ -157,40 +212,15 @@ public struct SettingsView: View {
                     showsFindWal: true
                 )
             }
-            .padding(.vertical, UIStyle.spaceMD)
         }
     }
 
     private var appearanceTab: some View {
-        ScrollView {
-            VStack(spacing: UIStyle.spaceLG) {
-                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
-                    Label("Default Sorting", systemImage: "arrow.up.arrow.down")
-                        .font(UIStyle.sectionTitle)
-
-                    HStack(spacing: UIStyle.spaceMD) {
-                        Picker("Sort by", selection: $settingsManager.config.defaultSortOption) {
-                            ForEach(SortOption.allCases, id: \.self) { option in
-                                Text(option.rawValue).tag(option)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-
-                        Button {
-                            settingsManager.config.defaultSortOrder.toggle()
-                        } label: {
-                            Label(
-                                settingsManager.config.defaultSortOrder ? "A–Z" : "Z–A",
-                                systemImage: settingsManager.config.defaultSortOrder ? "arrow.up" : "arrow.down"
-                            )
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.regular)
-                    }
-                }
-                .uiSettingsSection()
-
+        settingsPage {
+            settingsGroup(
+                title: "Display",
+                description: "Set the browser layout and choose how much information appears on each wallpaper."
+            ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
                     Label("Grid Layout", systemImage: "square.grid.3x3")
                         .font(UIStyle.sectionTitle)
@@ -221,7 +251,44 @@ public struct SettingsView: View {
                     .labelsHidden()
                 }
                 .uiSettingsSection()
+            }
 
+            settingsGroup(
+                title: "Sorting",
+                description: "Choose the order used when the wallpaper browser opens."
+            ) {
+                VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
+                    Label("Default Sorting", systemImage: "arrow.up.arrow.down")
+                        .font(UIStyle.sectionTitle)
+
+                    HStack(spacing: UIStyle.spaceMD) {
+                        Picker("Sort by", selection: $settingsManager.config.defaultSortOption) {
+                            ForEach(SortOption.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+
+                        Button {
+                            settingsManager.config.defaultSortOrder.toggle()
+                        } label: {
+                            Label(
+                                settingsManager.config.defaultSortOrder ? "A–Z" : "Z–A",
+                                systemImage: settingsManager.config.defaultSortOrder ? "arrow.up" : "arrow.down"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                    }
+                }
+                .uiSettingsSection()
+            }
+
+            settingsGroup(
+                title: "Transitions",
+                description: "Control the animation played above the desktop when a wallpaper is applied."
+            ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
                     Label("Wallpaper Transition", systemImage: "rectangle.on.rectangle.angled")
                         .font(UIStyle.sectionTitle)
@@ -263,7 +330,12 @@ public struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .uiSettingsSection()
+            }
 
+            settingsGroup(
+                title: "Maintenance",
+                description: "Refresh generated wallpaper data when previews or color filters need to be rebuilt."
+            ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
                     Label("Cache", systemImage: "internaldrive")
                         .font(UIStyle.sectionTitle)
@@ -311,13 +383,15 @@ public struct SettingsView: View {
                 }
                 .uiSettingsSection()
             }
-            .padding(.vertical, UIStyle.spaceMD)
         }
     }
 
     private var integrationsTab: some View {
-        ScrollView {
-            VStack(spacing: UIStyle.spaceLG) {
+        settingsPage {
+            settingsGroup(
+                title: "Color engine",
+                description: "Choose how wallpaper colors are extracted and prepared for the rest of the app."
+            ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
                     Label("Wal Backend", systemImage: "paintbrush.pointed")
                         .font(UIStyle.sectionTitle)
@@ -341,7 +415,12 @@ public struct SettingsView: View {
                     }
                 }
                 .uiSettingsSection()
+            }
 
+            settingsGroup(
+                title: "Matugen palette",
+                description: "Configure the optional Material You pipeline and its preference service."
+            ) {
                 pathSection(
                     title: "Matugen Binary",
                     icon: "paintpalette",
@@ -462,7 +541,12 @@ public struct SettingsView: View {
                     .help("Inspect every generated Material, Base16, and tonal palette color")
                 }
                 .uiSettingsSection()
+            }
 
+            settingsGroup(
+                title: "Browser & scripts",
+                description: "Keep browser themes and optional post-processing scripts in sync with wallpaper changes."
+            ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
                     Label("Browser Integration", systemImage: "safari")
                         .font(UIStyle.sectionTitle)
@@ -483,7 +567,12 @@ public struct SettingsView: View {
                     pickerType: .script,
                     apply: applyCustomScript
                 )
+            }
 
+            settingsGroup(
+                title: "Wallhaven",
+                description: "Set the optional API connection and the defaults used by the Wallhaven browser."
+            ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
                     Label("Wallhaven API Key", systemImage: "key")
                         .font(UIStyle.sectionTitle)
@@ -616,13 +705,15 @@ public struct SettingsView: View {
                 }
                 .uiSettingsSection()
             }
-            .padding(.vertical, UIStyle.spaceMD)
         }
     }
 
     private var cliTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: UIStyle.spaceLG) {
+        settingsPage {
+            settingsGroup(
+                title: "Installation",
+                description: "Install wallpick once, then control wallpapers from any terminal session."
+            ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceMD) {
                     Label("wallpick CLI Tool", systemImage: "terminal")
                         .font(UIStyle.sectionTitle)
@@ -664,7 +755,12 @@ public struct SettingsView: View {
                     }
                 }
                 .uiSettingsSection()
+            }
 
+            settingsGroup(
+                title: "Command reference",
+                description: "Common commands for choosing, listing, and refreshing wallpapers."
+            ) {
                 VStack(alignment: .leading, spacing: UIStyle.spaceSM) {
                     Text("Usage")
                         .font(UIStyle.sectionTitle)
@@ -682,7 +778,6 @@ public struct SettingsView: View {
                 }
                 .uiSettingsSection()
             }
-            .padding(.vertical, UIStyle.spaceMD)
         }
     }
 
@@ -1158,6 +1253,15 @@ extension SettingsView {
             case .appearance: return "Appearance"
             case .integrations: return "Integrations"
             case .cli: return "CLI"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .paths: return "Choose where Pywal Pick finds wallpapers and supporting tools."
+            case .appearance: return "Tune the browser layout, sorting, and wallpaper transitions."
+            case .integrations: return "Connect color engines, browsers, scripts, and Wallhaven."
+            case .cli: return "Install and use wallpick from Terminal."
             }
         }
 
